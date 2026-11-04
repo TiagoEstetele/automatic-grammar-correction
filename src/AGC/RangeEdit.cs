@@ -40,7 +40,7 @@ internal static class RangeEdit
                     if (tail.GetText(512).Replace("\r\n", "\n").Replace('\r', '\n').EndsWith(suffix, StringComparison.Ordinal))
                     {
                         // Em F8 sobre palavra, devolva o cursor ao sufixo que já existia (ex.: espaço).
-                        if (temporary && !automatic && valid() && owns(caret)) live.Selection.Select();
+                        if (temporary && !automatic && valid() && owns(caret)) RestoreCaret(live.Selection);
                         return RangeOutcome.Confirmed;
                     }
                 }
@@ -50,7 +50,14 @@ internal static class RangeEdit
         }
         finally
         {
-            if (temporary && focused() && owns(live.Target) && original()) live.Selection.Select();
+            if (temporary && focused() && owns(live.Target) && original()) RestoreCaret(live.Selection);
         }
+    }
+    static void RestoreCaret(TextPatternRange bookmark){
+        // Um bookmark vivo pode se expandir após a colagem: nunca deixar uma
+        // palavra selecionada quando o usuário originalmente só tinha um cursor.
+        var caret=bookmark.Clone();
+        caret.MoveEndpointByRange(TextPatternRangeEndpoint.Start,caret,TextPatternRangeEndpoint.End);
+        caret.Select();
     }
 }

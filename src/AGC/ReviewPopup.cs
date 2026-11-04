@@ -71,6 +71,22 @@ internal static class ReviewOptions
 
 internal sealed class ReviewPopup : Form
 {
+    sealed class ActionButton:Button{
+        bool pressing;
+        internal ActionButton(){TabStop=false;}
+        protected override void WndProc(ref Message m){
+            // O Button padrão chama Focus no mouse-down. Capture o clique sem
+            // ativar esta janela, mantendo PerformClick e a interface acessível.
+            if(m.Msg==0x201){pressing=true;Capture=true;return;}
+            if(m.Msg==0x202 && pressing){
+                bool inside=ClientRectangle.Contains(PointToClient(Cursor.Position));
+                pressing=false;Capture=false;if(inside)PerformClick();return;
+            }
+            if(m.Msg==0x215)pressing=false;
+            base.WndProc(ref m);
+        }
+    }
+    [System.Runtime.InteropServices.DllImport("user32")] static extern bool SetWindowPos(nint h,nint after,int x,int y,int w,int height,uint flags);
     readonly FlowLayoutPanel body = new() { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(10, 7, 10, 6) };
     readonly Label heading = new() { AutoSize = true, ForeColor = Theme.Accent };
     readonly Label preview = new() { AutoSize = false, Width = 335, Height = 42, ForeColor = Theme.Text, UseMnemonic = false };
@@ -90,7 +106,7 @@ internal sealed class ReviewPopup : Form
     protected override bool ShowWithoutActivation => true;
     protected override CreateParams CreateParams
     {
-        get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x80; return cp; }
+        get { var cp = base.CreateParams; cp.ExStyle |= 0x08000000 | 0x80 | 0x8; return cp; }
     }
     protected override void WndProc(ref Message m)
     {
@@ -99,7 +115,9 @@ internal sealed class ReviewPopup : Form
     }
     internal ReviewPopup()
     {
-        ShowInTaskbar = false; TopMost = true; StartPosition = FormStartPosition.Manual;
+        // Form.TopMost força FocusActiveControlInternal no Show(), mesmo com
+        // ShowWithoutActivation. Posicione no topo via SWP_NOACTIVATE.
+        ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
         FormBorderStyle = FormBorderStyle.None; BackColor = Theme.Panel; ForeColor = Theme.Text;
         Font = Theme.Font(9); AutoScaleMode = AutoScaleMode.Dpi; Padding = new Padding(2);
         heading.Font = Theme.Font(10, true); preview.Font = Theme.Font(10);
@@ -113,7 +131,10 @@ internal sealed class ReviewPopup : Form
     }
     void Button(string label, Action click)
     {
-        var b = Theme.Action(label, label is "Tudo" or "Copiar resultado" or "Aplicar");
+        bool primary=label=="Tudo" || label.StartsWith("Aplicar") || label.StartsWith("Revisar e aplicar");
+        var b=new ActionButton{FlatStyle=FlatStyle.Flat,Cursor=Cursors.Hand,Text=label,Font=Theme.Font(9,true),
+            Padding=new Padding(6,0,6,0),BackColor=primary?Theme.Accent:Theme.Raised,ForeColor=primary?Theme.Bg:Theme.Text};
+        b.FlatAppearance.BorderSize=0;
         b.AutoSize = true; b.AutoSizeMode = AutoSizeMode.GrowAndShrink; b.TabStop = false; b.Margin = new Padding(0, 3, 5, 0); b.AccessibleName = label;
         b.Click += (_, _) => click(); buttons.Controls.Add(b);
     }
@@ -169,6 +190,7 @@ internal sealed class ReviewPopup : Form
         ClientSize = new Size(width, Math.Min(work.Height, body.Padding.Vertical + heading.PreferredHeight + scroll.Height + buttons.PreferredSize.Height + LogicalToDeviceUnits(17)));
         Location = Place(anchor, Size, work);
         if (!Visible) Show();
+        SetWindowPos(Handle,-1,0,0,0,0,0x13); // NOMOVE | NOSIZE | NOACTIVATE
     }
     internal void Dismiss() { if (Target != null) BindAction?.Invoke(false); Hide(); Target = null; Result = null; preview.Text = ""; preview.AccessibleDescription = null; }
 }
