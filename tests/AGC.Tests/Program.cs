@@ -16,7 +16,7 @@ internal static class Program
     static int Main(string[] args)
     {
         var engine = new Corrector(Path.Combine(AppContext.BaseDirectory, "pt_BR", "pt_BR.dic"));
-        if(args.Contains("--desktop-paste")) return DesktopPaste.Run(engine);
+        if (args.Contains("--desktop-paste")) return DesktopPaste.Run(engine);
         var r = new RuleSettings();
         Check("início preguiçoso", false, engine.DictionaryLoaded);
         Corrector.WordChange? Word(string s) => engine.CompletedWord(s, s.Length, r);
@@ -27,20 +27,23 @@ internal static class Program
         Check("nenhuma revisão de palavra antiga", null, Word("voce voltou "));
         Check("erro comum ao avançar", "Exceção", Word("excessão ")?.After);
         Check("URL intacta", null, Word("eu escrevi https://teste.br/voce "));
-        string? Tail(string s) {
-            var patch=engine.TrailingPunctuation(s,r);
-            return patch is {} p?s[..p.Start]+p.After+s[p.End..]:null;
+        string? Tail(string s)
+        {
+            var patch = engine.TrailingPunctuation(s, r);
+            return patch is { } p ? s[..p.Start] + p.After + s[p.End..] : null;
         }
-        Check("vírgula automática no cursor","no entanto, ",Tail("no entanto "));
-        Check("conector adicional","além disso, ",Tail("além disso "));
-        Check("remove espaço antes do sinal","eu voltei!",Tail("eu voltei !"));
-        Check("não repete vírgula",null,Tail("no entanto, "));
-        Check("não muda letras automaticamente na UIA",null,Tail("eu vi voce "));
-        Check("decimal permanece",null,Tail("eu paguei 1,50 "));
-        Check("conector com regra desligada",null,engine.TrailingPunctuation("no entanto ",new RuleSettings{Commas=false}));
-        Check("interrogativa direta recebe interrogação","Por que você saiu?",engine.Correct("por que voce saiu",r,true));
-        Check("pergunta indireta termina com ponto","Eu sei por que você saiu.",engine.Correct("eu sei por que voce saiu",r,true));
-        Check("edição automática não aceita letras",false,Corrector.OnlySeparators(" oi, "));
+        Check("vírgula automática no cursor", "no entanto, ", Tail("no entanto "));
+        Check("conector adicional", "além disso, ", Tail("além disso "));
+        Check("remove espaço antes do sinal", "eu voltei!", Tail("eu voltei !"));
+        Check("espaço automático depois de vírgula","eu voltei, ",Tail("eu voltei,"));
+        Check("não acrescenta espaço à vírgula decimal",null,Tail("eu paguei 1,"));
+        Check("não repete vírgula", null, Tail("no entanto, "));
+        Check("não muda letras automaticamente na UIA", null, Tail("eu vi voce "));
+        Check("decimal permanece", null, Tail("eu paguei 1,50 "));
+        Check("conector com regra desligada", null, engine.TrailingPunctuation("no entanto ", new RuleSettings { Commas = false }));
+        Check("interrogativa direta recebe interrogação", "Por que você saiu?", engine.Correct("por que voce saiu", r, true));
+        Check("pergunta indireta termina com ponto", "Eu sei por que você saiu.", engine.Correct("eu sei por que voce saiu", r, true));
+        Check("edição automática não aceita letras", false, Corrector.OnlySeparators(" oi, "));
         var grammarOnly = ReviewOptions.Filter(r, ReviewKind.Grammar);
         Check("só gramática", "eles têm tempo", engine.Correct("eles tem tempo", grammarOnly, true));
         Check("só pontuação", "Voce vem?", engine.Correct("voce vem ?", ReviewOptions.Filter(r, ReviewKind.Punctuation), true));
@@ -118,15 +121,15 @@ internal static class Program
             using var panel = new Bitmap(popup.Width, popup.Height);
             popup.DrawToBitmap(panel, new Rectangle(Point.Empty, panel.Size));
             panel.Save(Path.ChangeExtension(args[index + 1], ".popup.png"), System.Drawing.Imaging.ImageFormat.Png);
-            using var menu=new TrayMenu();
-            menu.Items.Add(new ToolStripMenuItem("Melhorar texto"){ShortcutKeyDisplayString="Ctrl+Shift+G"});
+            using var menu = new TrayMenu();
+            menu.Items.Add(new ToolStripMenuItem("Melhorar texto") { ShortcutKeyDisplayString = "Ctrl+Shift+G" });
             menu.Items.Add("Melhorar texto copiado");
-            var hover=menu.Items.Add("Configurações"); menu.Items.Add("Retomar correção automática");
-            menu.Items.Add(new ToolStripSeparator());menu.Items.Add("Sair");
-            menu.Show(new Point(-30000,-30000));hover.Select();Application.DoEvents();
-            using var trayImage=new Bitmap(menu.Width,menu.Height);
-            menu.DrawToBitmap(trayImage,new Rectangle(Point.Empty,trayImage.Size));
-            trayImage.Save(Path.ChangeExtension(args[index+1],".menu.png"),System.Drawing.Imaging.ImageFormat.Png);
+            var hover = menu.Items.Add("Configurações"); menu.Items.Add("Retomar correção automática");
+            menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("Sair");
+            menu.Show(new Point(-30000, -30000)); hover.Select(); Application.DoEvents();
+            using var trayImage = new Bitmap(menu.Width, menu.Height);
+            menu.DrawToBitmap(trayImage, new Rectangle(Point.Empty, trayImage.Size));
+            trayImage.Save(Path.ChangeExtension(args[index + 1], ".menu.png"), System.Drawing.Imaging.ImageFormat.Png);
             menu.Close();
         }
         Console.WriteLine($"{count - failed}/{count} verificações aprovadas.");

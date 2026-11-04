@@ -52,24 +52,26 @@ internal static class Native
         return t != 0 && GetGUIThreadInfo(t, ref info) ? info.Focus : 0;
     }
     internal static bool ModifiersDown() => new[] { 16, 17, 18, 91, 92 }.Any(k => GetAsyncKeyState(k) < 0);
-    [DllImport("user32",CharSet=CharSet.Unicode)] static extern nint FindWindowEx(nint parent,nint after,string? cls,string title);
+    [DllImport("user32", CharSet = CharSet.Unicode)] static extern nint FindWindowEx(nint parent, nint after, string? cls, string title);
     [DllImport("user32")] static extern bool AllowSetForegroundWindow(uint processId);
-    internal static void GrantForegroundToTray(){
-        var h=FindWindowEx(-3,0,null,"AGC.Events");
-        if(h!=0 && GetWindowThreadProcessId(h,out var pid)!=0 && pid!=0) AllowSetForegroundWindow(pid);
+    internal static void GrantForegroundToTray()
+    {
+        var h = FindWindowEx(-3, 0, null, "AGC.Events");
+        if (h != 0 && GetWindowThreadProcessId(h, out var pid) != 0 && pid != 0) AllowSetForegroundWindow(pid);
     }
-    [StructLayout(LayoutKind.Sequential)] struct Key { public ushort Code, Scan; public uint Flags,Time; public nuint Extra; }
-    [StructLayout(LayoutKind.Sequential)] struct Mouse { public int X,Y; public uint Data,Flags,Time; public nuint Extra; }
+    [StructLayout(LayoutKind.Sequential)] struct Key { public ushort Code, Scan; public uint Flags, Time; public nuint Extra; }
+    [StructLayout(LayoutKind.Sequential)] struct Mouse { public int X, Y; public uint Data, Flags, Time; public nuint Extra; }
     [StructLayout(LayoutKind.Explicit)] struct Payload { [FieldOffset(0)] public Key Key; [FieldOffset(0)] public Mouse Mouse; }
     [StructLayout(LayoutKind.Sequential)] struct InputEvent { public uint Type; public Payload Payload; }
-    [DllImport("user32")] static extern uint SendInput(uint count,InputEvent[] events,int size);
-    static InputEvent Stroke(ushort code,ushort scan,uint flags)=>new(){Type=1,Payload=new(){Key=new(){Code=code,Scan=scan,Flags=flags}}};
-    static bool Send(InputEvent[] events)=>!ModifiersDown() && SendInput((uint)events.Length,events,Marshal.SizeOf<InputEvent>())==events.Length;
-    internal static bool PasteSelection()=>Send([Stroke(17,0,0),Stroke(86,0,0),Stroke(86,0,2),Stroke(17,0,2)]);
-    internal static bool InsertSeparators(string text){
-        if(text.Length is 0 or >8 || !Corrector.OnlySeparators(text)) return false;
-        var events=new InputEvent[text.Length*2];
-        for(int i=0;i<text.Length;i++){events[i*2]=Stroke(0,text[i],4);events[i*2+1]=Stroke(0,text[i],6);}
+    [DllImport("user32")] static extern uint SendInput(uint count, InputEvent[] events, int size);
+    static InputEvent Stroke(ushort code, ushort scan, uint flags) => new() { Type = 1, Payload = new() { Key = new() { Code = code, Scan = scan, Flags = flags } } };
+    static bool Send(InputEvent[] events) => !ModifiersDown() && SendInput((uint)events.Length, events, Marshal.SizeOf<InputEvent>()) == events.Length;
+    internal static bool PasteSelection() => Send([Stroke(17, 0, 0), Stroke(86, 0, 0), Stroke(86, 0, 2), Stroke(17, 0, 2)]);
+    internal static bool InsertSeparators(string text)
+    {
+        if (text.Length is 0 or > 8 || !Corrector.OnlySeparators(text)) return false;
+        var events = new InputEvent[text.Length * 2];
+        for (int i = 0; i < text.Length; i++) { events[i * 2] = Stroke(0, text[i], 4); events[i * 2 + 1] = Stroke(0, text[i], 6); }
         return Send(events);
     }
 }

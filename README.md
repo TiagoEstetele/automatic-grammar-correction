@@ -7,9 +7,9 @@ Corretor gratuito de português brasileiro para a bandeja do Windows. Em campos 
 ## Instalar e usar
 
 1. Baixe o ZIP Windows x64 na [página de versões](https://github.com/TiagoEstetele/automatic-grammar-correction/releases). Extraia **toda a pasta** e abra `AutomaticGrammarCorrection.exe`. O pacote inclui o runtime necessário. Não requer administrador.
-2. O ícone roxo aparece na bandeja, às vezes na seção de ícones ocultos. Dê dois cliques para abrir as configurações. O menu também permite pausar o modo automático ou sair.
-3. Digite uma palavra e avance com espaço ou pontuação. O AGC revisa a palavra concluída, sem esperar que você pare de escrever a frase toda. Em campos Win32 Edit compatíveis, aplica o ajuste. No Codex e em campos de navegador com acessibilidade disponível, apresenta a sugestão acima da palavra e preserva o rascunho.
-4. Para melhorar uma parte específica, selecione-a com o mouse ou com Shift e as setas. O pop-up aparece acima da seleção (abaixo se faltar espaço). Escolha **Ortografia**, **Gramática**, **Pontuação** ou **Tudo** e confira a prévia. Use **Aplicar** quando disponível ou **Copiar resultado** e **Ctrl+V**. Para a revisão completa pelo atalho, selecione texto e pressione **Ctrl+Shift+G**, ou escolha **Melhorar texto** na bandeja. Uma seleção editável tem prioridade. Sem seleção, o comando revisa o texto já copiado e deixa o resultado na área de transferência. Para trabalhar exclusivamente com o conteúdo copiado, use **Melhorar texto copiado**. A bandeja também funciona se outro aplicativo tiver reservado o atalho.
+2. Dê dois cliques no executável ou no ícone roxo da bandeja para abrir as configurações. Se a janela estiver minimizada, ela será restaurada. O corretor usa uma única instância. Para iniciar silenciosamente, execute `AutomaticGrammarCorrection.exe --tray`.
+3. Espaço e pontuação disparam a revisão da última palavra. Nos campos Win32 Edit compatíveis, o AGC corrige diretamente. Em editores acessíveis como o Codex, o modo automático pode ajustar os separadores imediatamente antes do cursor: por exemplo, “no entanto ” vira “no entanto, ”. Ele nunca seleciona palavras inteiras para redigitá-las em segundo plano. Decimais como “1,50” são preservados.
+4. Selecione o trecho desejado. Com o pop-up aberto, pressione **F8** para revisar tudo e substituir a seleção de uma vez. Se preferir, escolha **Ortografia**, **Gramática** ou **Pontuação** antes de pressionar F8. O botão **Revisar e aplicar** também funciona quando outro aplicativo já reservou a tecla. Fora do pop-up, F8 conserva sua função normal. **Ctrl+Shift+G** aplica a revisão completa de uma seleção editável ou melhora o conteúdo copiado se não houver seleção.
 
 | Entrada | Resultado da revisão |
 |---|---|
@@ -20,7 +20,7 @@ Corretor gratuito de português brasileiro para a bandeja do Windows. Em campos 
 
 ## Painel e revisão
 
-![Painel da versão 1.1](assets/painel.png)
+![Painel da versão 1.2](assets/painel.png)
 
 Em **Visão geral**, teste uma frase e pause ou retome o corretor. Em **Aplicativos**, a busca encontra um executável por nome ou caminho. A prévia do pop-up deixa você decidir se quer aplicar ou copiar.
 
@@ -28,7 +28,7 @@ Em **Visão geral**, teste uma frase e pause ou retome o corretor. Em **Aplicati
 
 ## Alcance das correções
 
-O motor combina sinais lexicais de português com o dicionário VERO. O perfil automático exige indícios do idioma. URLs, e-mails, números decimais, identificadores e trechos reconhecidos como código são preservados. As heurísticas têm limites em textos mistos, nomes próprios e citações. Em **Configurações → Digitação**, cada família pode ser desativada individualmente. Durante a digitação, acentos comuns e erros conhecidos usam uma tabela local para resposta imediata. Para outras grafias, o AGC aceita uma sugestão próxima sem ambiguidade quando identifica português pelo contexto. As vírgulas se restringem ao conector “no entanto”. A busca aproximada mais ampla é opcional na revisão completa. Escolher **Ortografia** no pop-up pede essa busca explicitamente.
+O motor combina sinais lexicais de português com o dicionário VERO. O perfil automático exige indícios do idioma. URLs, e-mails, números decimais, identificadores e trechos reconhecidos como código são preservados. As heurísticas têm limites em textos mistos, nomes próprios e citações. Em **Configurações → Digitação**, cada família pode ser desativada individualmente. Durante a digitação, acentos comuns e erros conhecidos usam uma tabela local para resposta imediata. Para outras grafias, o AGC aceita uma sugestão próxima sem ambiguidade quando identifica português pelo contexto. As regras de vírgula incluem conectores como “no entanto”, “além disso”, “por outro lado” e “ou seja”. Perguntas diretas reconhecidas recebem “?” ao concluir o parágrafo ou revisar a seleção. A busca aproximada mais ampla é opcional na revisão completa. Escolher **Ortografia** no pop-up pede essa busca explicitamente.
 
 A revisão corrige os padrões documentados e mantém o sentido do texto. O projeto não oferece paráfrase livre nem cobertura completa da gramática. As regras de concordância tratam formas frequentes como “eles tem”, “nós vai” e “a gente vamos”. A lista de padrões adaptados e suas condições está em `Lightproof.cs`.
 
@@ -38,11 +38,13 @@ Em **Configurações → Aplicativos**, todos os executáveis identificados com 
 
 Ao entrar em tela cheia, a correção automática começa pausada. Uma notificação oferece a escolha. Também é possível responder pelo menu **Correção nesta tela cheia…** se o Windows suprimir as notificações. A decisão vale para aquela janela até ela sair de tela cheia ou fechar. Alternar tarefas mantém a decisão. Uma janela maximizada comum mantém o comportamento habitual.
 
-**No Codex e em campos de navegador**, o AGC deixa o rascunho intacto enquanto você digita. Selecione a frase e pressione **Ctrl+Shift+G**. Quando aparecer **Texto melhorado**, o resultado estará na área de transferência. Use **Ctrl+V** para substituir a seleção quando quiser. Se o editor não oferecer acesso à seleção, use **Ctrl+C → Melhorar texto copiado** no menu da bandeja e depois **Ctrl+V**. Senhas são ignoradas.
+**Aplicação no Codex e em campos de navegador.** A revisão explícita coloca o resultado na área de transferência e solicita uma única colagem sobre a seleção. Antes disso, o AGC confere a janela, o campo editável e o trecho original. A área de transferência fica com a versão revisada. Se o editor não confirmar a alteração, o AGC avisa e não repete a colagem. Campos protegidos, somente leitura ou sem uma seleção verificável não recebem essa substituição. Durante a digitação, apenas espaços e sinais junto ao cursor podem ser alterados automaticamente por acessibilidade; para as demais mudanças, use F8.
 
-A edição automática direta fica restrita a controles clássicos Win32 Edit fora do Codex. Neles, o AGC confere o conteúdo, a seleção e o limite de caracteres. Se o trabalho for cancelado depois que o AGC selecionou um trecho, ele restaura o cursor original somente se a seleção ainda for dele. A revisão sob demanda aceita até 100 mil caracteres. Em campos de chat, revise antes de enviar.
+**Menu da bandeja.** O item ativo usa destaque roxo com texto claro. **Pausar correção automática** muda para **Retomar correção automática** quando a correção está pausada.
 
-Ao atualizar da 1.0.0, escolha **Sair** no ícone antigo, extraia a nova versão em outra pasta e abra o novo executável. As preferências locais são compartilhadas entre as versões.
+![Menu da bandeja com Configurações destacado](assets/bandeja.png)
+
+Para atualizar, escolha **Sair** na versão antiga, extraia o ZIP novo e abra o executável. As configurações locais são reaproveitadas.
 
 ## Escolhas técnicas
 

@@ -110,7 +110,7 @@ internal sealed class SettingsWindow : Form
         Section("Seleção e revisão");
         var help = Card(95);
         TextAt(help, "Selecione o trecho que quer melhorar", 10, 26, 11, true);
-        TextAt(help, "O pop-up oferece ortografia, gramática e pontuação. Ctrl+Shift+G revisa a seleção inteira. No Codex, cole o resultado com Ctrl+V.", 40, 45, 9, false, Theme.Muted);
+        TextAt(help, "Pressione F8 no pop-up para revisar e aplicar ao trecho selecionado. Escolha uma categoria antes de F8 para aplicar só aquela revisão.", 40, 45, 9, false, Theme.Muted);
     }
     void Rules()
     {
@@ -128,8 +128,8 @@ internal sealed class SettingsWindow : Form
         Section("Formatação da frase");
         Row("Espaçamento", "Normaliza espaços entre palavras e sinais de pontuação.", r.Spacing, b => r.Spacing = b);
         Row("Maiúsculas", "Usa maiúscula no início da frase.", r.Capitals, b => r.Capitals = b);
-        Row("Vírgulas", "Ajusta o conector “no entanto” no contexto da frase.", r.Commas, b => r.Commas = b);
-        Row("Ponto final", "Conclui parágrafos e revisões solicitadas.", r.FinalStop, b => r.FinalStop = b);
+        Row("Vírgulas", "Pontua conectores como “no entanto”, “ou seja” e “além disso”.", r.Commas, b => r.Commas = b);
+        Row("Ponto final", "Conclui parágrafos e identifica perguntas diretas na revisão.", r.FinalStop, b => r.FinalStop = b);
         Section("Revisão completa");
         Row("Sugestões aproximadas", "Inclui ortografia aproximada ao pedir a revisão completa.", r.Spelling, b => r.Spelling = b);
     }

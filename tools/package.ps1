@@ -10,7 +10,7 @@ if ($LASTEXITCODE) {throw 'Falha no restore do aplicativo'}
 if ($LASTEXITCODE) {throw 'Falha na publicação'}
 Copy-Item -LiteralPath (Join-Path $root 'README.md') -Destination $stage
 New-Item -ItemType Directory -Path (Join-Path $stage 'assets') -Force | Out-Null
-foreach ($asset in @('avatar.png','painel.png','revisao.png')) { Copy-Item -LiteralPath (Join-Path $root "assets/$asset") -Destination (Join-Path $stage 'assets') }
+foreach ($asset in @('avatar.png','painel.png','revisao.png','bandeja.png')) { Copy-Item -LiteralPath (Join-Path $root "assets/$asset") -Destination (Join-Path $stage 'assets') }
 $version=([xml](Get-Content -Raw (Join-Path $root 'Directory.Build.props'))).Project.PropertyGroup.Version
 $zip=Join-Path $out "automatic-grammar-correction-$version-win-x64.zip"
 # Tar do Windows produz ZIP e preserva todos os diretórios do runtime.

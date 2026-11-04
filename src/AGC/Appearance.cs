@@ -115,43 +115,50 @@ internal sealed class SwitchRow : CheckBox
 
 internal sealed class TrayMenu : ContextMenuStrip
 {
-    internal TrayMenu() {
-        BackColor=Theme.Panel; ForeColor=Theme.Text; ShowCheckMargin=false; ShowImageMargin=false;
-        Renderer=new TrayRenderer(); Font=Theme.Font(10); Padding=new Padding(6);
-        Items.Add(new ToolStripLabel("AGC   ·   Assistente de escrita"){ForeColor=Theme.Accent,Padding=new Padding(9,5,7,6)});
+    internal TrayMenu()
+    {
+        BackColor = Theme.Panel; ForeColor = Theme.Text; ShowCheckMargin = false; ShowImageMargin = false;
+        Renderer = new TrayRenderer(); Font = Theme.Font(10); Padding = new Padding(6);
+        Items.Add(new ToolStripLabel("AGC   ·   Assistente de escrita") { ForeColor = Theme.Accent, Padding = new Padding(9, 5, 7, 6) });
         Items.Add(new ToolStripSeparator());
     }
-    protected override void OnItemAdded(ToolStripItemEventArgs e){
-        base.OnItemAdded(e);
-        if(e.Item is ToolStripMenuItem item) item.Padding=new Padding(9,5,9,5);
-    }
-    sealed class TrayRenderer:ToolStripRenderer
+    protected override void OnItemAdded(ToolStripItemEventArgs e)
     {
-        static Color PanelColor=>SystemInformation.HighContrast?SystemColors.Menu:Theme.Panel;
-        static Color ActiveColor=>SystemInformation.HighContrast?SystemColors.Highlight:Color.FromArgb(69,51,97);
-        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)=>e.Graphics.Clear(PanelColor);
-        protected override void OnRenderImageMargin(ToolStripRenderEventArgs e){using var b=new SolidBrush(PanelColor);e.Graphics.FillRectangle(b,e.AffectedBounds);}
-        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e){
-            using var p=new Pen(SystemInformation.HighContrast?SystemColors.MenuText:Theme.Border);
-            e.Graphics.DrawRectangle(p,0,0,e.ToolStrip.Width-1,e.ToolStrip.Height-1);
+        base.OnItemAdded(e);
+        if (e.Item is ToolStripMenuItem item) item.Padding = new Padding(9, 5, 9, 5);
+    }
+    sealed class TrayRenderer : ToolStripRenderer
+    {
+        static Color PanelColor => SystemInformation.HighContrast ? SystemColors.Menu : Theme.Panel;
+        static Color ActiveColor => SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(69, 51, 97);
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e) => e.Graphics.Clear(PanelColor);
+        protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) { using var b = new SolidBrush(PanelColor); e.Graphics.FillRectangle(b, e.AffectedBounds); }
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+        {
+            using var p = new Pen(SystemInformation.HighContrast ? SystemColors.MenuText : Theme.Border);
+            e.Graphics.DrawRectangle(p, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
         }
-        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e){
-            var rect=new Rectangle(Point.Empty,e.Item.Size);
-            using var b=new SolidBrush(e.Item.Selected && e.Item.Enabled?ActiveColor:PanelColor);e.Graphics.FillRectangle(b,rect);
-            if(e.Item.Selected && e.Item.Enabled){
-                using var accent=new SolidBrush(SystemInformation.HighContrast?SystemColors.HighlightText:Theme.Accent);
-                e.Graphics.FillRectangle(accent,0,3,3,Math.Max(0,rect.Height-6));
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            var rect = new Rectangle(Point.Empty, e.Item.Size);
+            using var b = new SolidBrush(e.Item.Selected && e.Item.Enabled ? ActiveColor : PanelColor); e.Graphics.FillRectangle(b, rect);
+            if (e.Item.Selected && e.Item.Enabled)
+            {
+                using var accent = new SolidBrush(SystemInformation.HighContrast ? SystemColors.HighlightText : Theme.Accent);
+                e.Graphics.FillRectangle(accent, 0, 3, 3, Math.Max(0, rect.Height - 6));
             }
         }
-        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e){
-            e.TextColor=SystemInformation.HighContrast?
-                (e.Item.Selected?SystemColors.HighlightText:SystemColors.MenuText):
-                e.Item is ToolStripLabel?Theme.Accent:e.Item.Enabled?Theme.Text:Theme.Muted;
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = SystemInformation.HighContrast ?
+                (e.Item.Selected ? SystemColors.HighlightText : SystemColors.MenuText) :
+                e.Item is ToolStripLabel ? Theme.Accent : e.Item.Enabled ? Theme.Text : Theme.Muted;
             base.OnRenderItemText(e);
         }
-        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e){
-            using var p=new Pen(SystemInformation.HighContrast?SystemColors.MenuText:Theme.Border);
-            e.Graphics.DrawLine(p,5,e.Item.Height/2,e.Item.Width-5,e.Item.Height/2);
+        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+        {
+            using var p = new Pen(SystemInformation.HighContrast ? SystemColors.MenuText : Theme.Border);
+            e.Graphics.DrawLine(p, 5, e.Item.Height / 2, e.Item.Width - 5, e.Item.Height / 2);
         }
     }
 }

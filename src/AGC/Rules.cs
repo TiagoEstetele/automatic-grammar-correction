@@ -74,19 +74,28 @@ public sealed class Corrector
     internal static bool OnlySeparators(string text) => text.All(c => " ,;:.!?".Contains(c));
     // Em um editor acessível, só a pontuação/espaços imediatamente anteriores ao
     // cursor podem ser substituídos sem ação do usuário. Nunca selecionar letras.
-    internal WordChange? TrailingPunctuation(string prefix, RuleSettings rules, bool beginsLine=true)
+    internal WordChange? TrailingPunctuation(string prefix, RuleSettings rules, bool beginsLine = true)
     {
-        int start=prefix.LastIndexOfAny(['\r','\n'])+1;
-        string line=prefix[start..];
-        if(line.Length==0 || line.Length>256 || !OnlySeparators(line[^1..]) || !rules.Spacing && !rules.Commas) return null;
-        var only=ReviewOptions.Filter(rules, ReviewKind.Punctuation);
-        only.Capitals=false; only.FinalStop=false;
-        var after=Correct(line,only,false,startsAtBoundary:beginsLine || start>0);
-        if(line==after) return null;
-        int common=0;while(common<line.Length && common<after.Length && line[common]==after[common]) common++;
-        string before=line[common..], replacement=after[common..];
-        if(before.Length>8 || replacement.Length is 0 or >8 || !OnlySeparators(before) || !OnlySeparators(replacement)) return null;
-        return new(start+common,prefix.Length,before,replacement);
+        int start = prefix.LastIndexOfAny(['\r', '\n']) + 1;
+        string line = prefix[start..];
+        if (line.Length == 0 || line.Length > 256 || !OnlySeparators(line[^1..]) || !rules.Spacing && !rules.Commas) return null;
+        var only = ReviewOptions.Filter(rules, ReviewKind.Punctuation);
+        only.Capitals = false; only.FinalStop = false;
+        var after = Correct(line, only, false, startsAtBoundary: beginsLine || start > 0);
+        after = SpaceAfterTypedComma(line, after, rules);
+        if (line == after) return null;
+        int common = 0; while (common < line.Length && common < after.Length && line[common] == after[common]) common++;
+        string before = line[common..], replacement = after[common..];
+        if (before.Length > 8 || replacement.Length is 0 or > 8 || !OnlySeparators(before) || !OnlySeparators(replacement)) return null;
+        return new(start + common, prefix.Length, before, replacement);
+    }
+    static string SpaceAfterTypedComma(string source, string corrected, RuleSettings rules)
+    {
+        if (!rules.Spacing || !Words.Matches(source).Any(m => Markers.Contains(m.Value)) || CodeLine.IsMatch(source)) return corrected;
+        int comma = corrected.TrimEnd(' ').Length - 1;
+        if (comma < 1 || corrected[comma] != ',' || !char.IsLetter(corrected[comma - 1]) ||
+            Protected.Matches(source).Any(m => m.Index + m.Length >= source.TrimEnd(' ').Length)) return corrected;
+        return corrected[..(comma + 1)] + " ";
     }
 
     // O contexto determina idioma/concordância, mas a edição só abrange a última
@@ -131,6 +140,7 @@ public sealed class Corrector
             if (replacement != token.Value) return new(start + token.Index, start + token.Index + token.Length, token.Value, replacement);
         }
         string corrected = Correct(context, rules, false, paragraph, start == 0 ? startsAtBoundary : text[start - 1] is '\r' or '\n');
+        if (!paragraph && end == caret) corrected = SpaceAfterTypedComma(context, corrected, rules);
         var next = LastWord.Match(corrected);
         if (!next.Success) return null;
         string updated = next.Value;
@@ -201,9 +211,10 @@ public sealed class Corrector
                 line = NosVai.Replace(line, m => m.Groups[1].Value + " " + MatchCase(m.Groups[2].Value, "vamos"));
                 line = GenteVamos.Replace(line, m => m.Groups[1].Value + " " + MatchCase(m.Groups[2].Value, "vai"));
             }
-            if (rules.Commas) {
+            if (rules.Commas)
+            {
                 line = Lightproof.Commas(line);
-                line = Intro.Replace(line,m=>m.Index==0 && i==0 && !startsAtBoundary ? m.Value : m.Groups[1].Value+m.Groups[2].Value+", ");
+                line = Intro.Replace(line, m => m.Index == 0 && i == 0 && !startsAtBoundary ? m.Value : m.Groups[1].Value + m.Groups[2].Value + ", ");
             }
             if (rules.Spacing)
             {
