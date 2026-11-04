@@ -14,7 +14,10 @@ internal sealed class Tray : ApplicationContext
     readonly NotifyIcon icon;
     readonly Control dispatcher = new();
     readonly ToolStripMenuItem sessionItem = new();
-    readonly System.Windows.Forms.Timer debounce = new() { Interval = 150 };
+    readonly System.Windows.Forms.Timer debounce = new() { Interval = 25 };
+    readonly System.Windows.Forms.Timer selectionTimer = new() { Interval = 55 };
+    readonly ReviewPopup popup = new();
+    bool probeBusy, probePending;
     readonly System.Windows.Forms.Timer saveTimer = new() { Interval = 1000 };
     SettingsWindow? settings;
     nint lastApp, prompted;
@@ -31,7 +34,16 @@ internal sealed class Tray : ApplicationContext
     {
         prefs = Preferences.Load(out var recovered);
         _ = dispatcher.Handle;
-        var menu = new ContextMenuStrip { BackColor = Theme.Panel, ForeColor = Theme.Text, ShowImageMargin = false };
+        var menu = new ContextMenuStrip
+        {
+            BackColor = Theme.Panel,
+            ForeColor = Theme.Text,
+            ShowImageMargin = false,
+            ShowCheckMargin = true,
+            Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors()),
+            Font = Theme.Font(10),
+            Padding = new Padding(5)
+        };
         signals = new();
         icon = new NotifyIcon { Icon = new Icon(Path.Combine(AppContext.BaseDirectory, "tray.ico")), Text = "automatic grammar correction", ContextMenuStrip = menu, Visible = true };
         menu.Items.Add("Melhorar texto   Ctrl+Shift+G", null, async (_, _) => await Manual(true));
@@ -53,17 +65,33 @@ internal sealed class Tray : ApplicationContext
         icon.BalloonTipClicked += (_, _) => { if (prompted != 0) SessionChoice(); };
         signals.InputChanged += () =>
         {
-            // Se a pessoa continua digitando após o espaço, aguarde uma pausa e
-            // revise apenas as palavras que já terminaram.
+            if (popup.Target?.WordResult == null) popup.Dismiss();
+            selectionTimer.Stop();
             Interlocked.Increment(ref generation);
             if (automaticInFlight) pendingBoundary = true;
-            if (pendingBoundary) { debounce.Stop(); debounce.Start(); }
+            if (pendingBoundary) debounce.Start();
         };
         signals.CursorMoved += InvalidateWork;
+        signals.SelectionGesture += () =>
+        {
+            if (popup.Visible && popup.Bounds.Contains(Cursor.Position) && Native.GetAsyncKeyState(0x10) >= 0) return;
+            popup.Dismiss();
+            Interlocked.Increment(ref generation);
+            selectionTimer.Stop(); selectionTimer.Start();
+        };
+        selectionTimer.Tick += async (_, _) =>
+        {
+            selectionTimer.Stop();
+            await ProbeSelection();
+        };
+        popup.Chosen += async k => await Preview(k);
+        popup.CopyRequested += async () => await CopyPreview();
+        popup.ApplyRequested += async () => await ApplyPreview();
         signals.Boundary += () =>
         {
             if (!paused)
             {
+                popup.Dismiss();
                 boundaryWindow = Native.GetForegroundWindow(); boundaryFocus = Native.Focus(boundaryWindow);
                 pendingBoundary = true; debounce.Start();
             }
@@ -76,7 +104,7 @@ internal sealed class Tray : ApplicationContext
         if (recovered) Notify("Preferências recuperadas", "Os padrões foram restaurados. Verifique a pasta de configurações.");
         if (!signals.ShortcutReady) Notify("Atalho indisponível", "Ctrl+Shift+G já está em uso. Use Melhorar texto na bandeja.");
     }
-    void InvalidateWork() { Interlocked.Increment(ref generation); pendingBoundary = false; debounce.Stop(); }
+    void InvalidateWork() { Interlocked.Increment(ref generation); pendingBoundary = false; debounce.Stop(); selectionTimer.Stop(); popup.Dismiss(); }
     void Notify(string title, string message) => icon.ShowBalloonTip(4500, title, message, ToolTipIcon.Info);
     void Changed(nint h, uint evt)
     {
@@ -108,7 +136,8 @@ internal sealed class Tray : ApplicationContext
     {
         var h = prompted; var pid = promptedPid;
         if (h == 0 || !Native.IsWindow(h) || !Fullscreen.IsFull(h)) return;
-        var answer = MessageBox.Show("Ativar a correção até esta janela sair de tela cheia?", "automatic grammar correction", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+        using var dialog = new SessionPrompt(Path.GetFileNameWithoutExtension(Preferences.ProcessPath(pid)) ?? "O aplicativo");
+        var answer = dialog.ShowDialog();
         if (Fullscreen.IsFull(h)) sessions.Answer(h, pid, answer == DialogResult.Yes);
         InvalidateWork();
     }
@@ -125,7 +154,80 @@ internal sealed class Tray : ApplicationContext
         var h = Native.GetForegroundWindow();
         if (h != boundaryWindow || Native.Focus(h) != boundaryFocus) return;
         if (!Eligible(h, true) || Native.ModifiersDown()) return;
-        await Edit(h, false);
+        if (Editor.IsPlain(boundaryFocus) && !string.Equals(Path.GetFileNameWithoutExtension(lastPath), "Codex", StringComparison.OrdinalIgnoreCase))
+            await Edit(h, false);
+        else
+        {
+            busy = true; automaticInFlight = true;
+            try
+            {
+                if (await Probe(h, true) is { } word && Eligible(h, true) && Native.GetForegroundWindow() == h) popup.Present(word);
+            }
+            finally { busy = false; automaticInFlight = false; if (!closed && pendingBoundary) debounce.Start(); }
+        }
+    }
+    async Task<ReviewTarget?> Probe(nint h, bool word)
+    {
+        int stamp = Volatile.Read(ref generation);
+        bool Current() => !closed && Volatile.Read(ref generation) == stamp && Native.GetForegroundWindow() == h;
+        try
+        {
+            var target = await Task.Run(() => ReviewProbe.Read(h, engine, prefs.Rules, word, Current));
+            return Current() ? target : null;
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException or COMException or IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or System.Text.RegularExpressions.RegexMatchTimeoutException) { return null; }
+    }
+    async Task ProbeSelection()
+    {
+        if (closed) return;
+        if (probeBusy) { probePending = true; return; }
+        var h = Native.GetForegroundWindow();
+        if (!Eligible(h, true)) return;
+        probeBusy = true;
+        try
+        {
+            if (await Probe(h, false) is { } target && Native.GetForegroundWindow() == h && Eligible(h, true)) popup.Present(target);
+        }
+        finally { probeBusy = false; if (probePending && !closed) { probePending = false; selectionTimer.Start(); } }
+    }
+    async Task Preview(ReviewKind kind)
+    {
+        var target = popup.Target;
+        if (target == null || !Eligible(target.Window, true)) { popup.Dismiss(); return; }
+        var rules = ReviewOptions.Filter(prefs.Rules, kind);
+        try
+        {
+            var result = await Task.Run(() => engine.Correct(target.Original, rules, true));
+            if (popup.Target == target && await Probe(target.Window, false) == target && popup.Target == target)
+                popup.ShowResult(result, SupportsInline(target.Focus));
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.Text.RegularExpressions.RegexMatchTimeoutException) { popup.Dismiss(); Notify("Revisão indisponível", "Tente novamente pela bandeja."); }
+    }
+    bool SupportsInline(nint focus) => Editor.IsPlain(focus) &&
+        !string.Equals(Path.GetFileNameWithoutExtension(lastPath), "Codex", StringComparison.OrdinalIgnoreCase);
+    async Task ApplyPreview()
+    {
+        var target = popup.Target; var result = popup.Result;
+        if (busy || target == null || result == null || !Eligible(target.Window, true) || !SupportsInline(target.Focus)) return;
+        int stamp = Volatile.Read(ref generation);
+        bool Valid() => !closed && Volatile.Read(ref generation) == stamp && Native.GetForegroundWindow() == target.Window && Native.Focus(target.Window) == target.Focus;
+        busy = true;
+        try
+        {
+            var edit = await Task.Run(() => Editor.Plain(target.Focus, true, engine, prefs.Rules, Valid, target, result));
+            if (edit.State == Outcome.CopyResult) Notify("Campo com limite", "Use Copiar resultado para preservar o texto inteiro.");
+            else popup.Dismiss();
+        }
+        finally { busy = false; }
+    }
+    async Task CopyPreview()
+    {
+        var target = popup.Target; var result = popup.Result;
+        if (target == null || result == null) return;
+        uint seq = Native.GetClipboardSequenceNumber();
+        if (await Probe(target.Window, target.WordResult != null) != target || popup.Target != target || seq != Native.GetClipboardSequenceNumber()) return;
+        try { Clipboard.SetText(result); popup.Dismiss(); Notify("Resultado copiado", "Cole no trecho desejado com Ctrl+V."); }
+        catch (ExternalException) { Notify("Área de transferência ocupada", "Tente copiar novamente."); }
     }
     async Task<EditResult> Edit(nint h, bool manual)
     {
@@ -133,8 +235,9 @@ internal sealed class Tray : ApplicationContext
         busy = true; automaticInFlight = !manual; int ticket = Volatile.Read(ref generation);
         bool permittedFull = sessions.Allowed(h, lastPid);
         var rules = prefs.Rules;
+        string? executable = lastPath;
         bool Valid() => Volatile.Read(ref generation) == ticket && (manual || permittedFull || !Fullscreen.IsFull(h));
-        try { return await Task.Run(() => Editor.Run(h, manual, engine, rules, Valid)); }
+        try { return await Task.Run(() => Editor.Run(h, manual, engine, rules, Valid, executable)); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ElementNotAvailableException or InvalidOperationException or COMException or System.Text.RegularExpressions.RegexMatchTimeoutException or NotSupportedException or ArgumentException)
         {
             if (manual || ex is IOException) Notify("Correção indisponível", ex is IOException ? "Verifique o dicionário na pasta pt_BR do aplicativo." : "O editor não disponibilizou o texto para correção.");
@@ -192,13 +295,16 @@ internal sealed class Tray : ApplicationContext
     void OpenSettings()
     {
         if (settings is { IsDisposed: false }) { settings.Activate(); return; }
-        settings = new SettingsWindow(prefs, () => { InvalidateWork(); Save(); });
+        settings = new SettingsWindow(prefs, () => { InvalidateWork(); Save(); }, () => paused, b =>
+        {
+            if (icon.ContextMenuStrip?.Items.OfType<ToolStripMenuItem>().FirstOrDefault(item => item.CheckOnClick) is { } toggle) toggle.Checked = b;
+        }, engine);
         settings.Show();
     }
     void Save() { try { prefs.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Notify("Preferências não salvas", "Verifique o acesso à pasta de dados locais."); } }
     protected override void Dispose(bool disposing)
     {
-        if (disposing && !closed) { closed = true; InvalidateWork(); saveTimer.Stop(); Save(); signals.Dispose(); debounce.Dispose(); saveTimer.Dispose(); settings?.Dispose(); icon.Visible = false; icon.ContextMenuStrip?.Dispose(); icon.Icon?.Dispose(); icon.Dispose(); dispatcher.Dispose(); }
+        if (disposing && !closed) { closed = true; InvalidateWork(); saveTimer.Stop(); Save(); signals.Dispose(); debounce.Dispose(); selectionTimer.Dispose(); popup.Dispose(); saveTimer.Dispose(); settings?.Dispose(); icon.Visible = false; icon.ContextMenuStrip?.Dispose(); icon.Icon?.Dispose(); icon.Dispose(); dispatcher.Dispose(); }
         base.Dispose(disposing);
     }
 }

@@ -8,6 +8,7 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
     readonly Native.EventProc callback;
     readonly List<nint> hooks = new();
     internal event Action? Boundary, InputChanged, CursorMoved, HotkeyPressed;
+    internal event Action? SelectionGesture;
     internal event Action<nint, uint>? WindowEvent;
     internal bool ShortcutReady { get; }
     internal SignalWindow()
@@ -25,7 +26,7 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
                 if (hook == 0) throw new InvalidOperationException("O Windows recusou o monitor de janelas.");
                 hooks.Add(hook);
             }
-            if (!Native.RegisterRawInputDevices([new Native.Device { Page = 1, Usage = 6, Flags = 0x100, Target = Handle }], 1, (uint)Marshal.SizeOf<Native.Device>()))
+            if (!Native.RegisterRawInputDevices([new Native.Device { Page = 1, Usage = 6, Flags = 0x100, Target = Handle }, new Native.Device { Page = 1, Usage = 2, Flags = 0x100, Target = Handle }], 2, (uint)Marshal.SizeOf<Native.Device>()))
                 throw new InvalidOperationException("O Windows recusou os eventos de teclado.");
             ShortcutReady = Native.RegisterHotKey(Handle, 1, 0x4000 | 2 | 4, 0x47); // Ctrl+Shift+G, sem repetição
         }
@@ -36,9 +37,15 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
         if (m.Msg == Native.Hotkey) HotkeyPressed?.Invoke();
         if (m.Msg == Native.Input)
         {
-            uint size = (uint)Marshal.SizeOf<Native.RawKey>();
-            if (Native.GetRawInputData(m.LParam, 0x10000003, out var key, ref size, (uint)Marshal.SizeOf<Native.Header>()) == size &&
-                key.Header.Type == 1 && key.Header.Device != 0 && key.Message is 0x100 or 0x104)
+            uint size = (uint)Marshal.SizeOf<Native.RawPacket>();
+            var bytes = Native.GetRawInputData(m.LParam, 0x10000003, out var packet, ref size, (uint)Marshal.SizeOf<Native.Header>());
+            if (bytes == uint.MaxValue || bytes == 0) { base.WndProc(ref m); return; }
+            var key = packet.Data;
+            if (packet.Header.Type == 0 && (key.MouseButtons & 2) != 0) SelectionGesture?.Invoke();
+            if (packet.Header.Type == 1 && key.Message is 0x101 or 0x105 &&
+                (key.Vk is 0x10 or 0xA0 or 0xA1 || key.Vk == 0x41 && Native.GetAsyncKeyState(0x11) < 0))
+                SelectionGesture?.Invoke();
+            if (packet.Header.Type == 1 && packet.Header.Device != 0 && key.Message is 0x100 or 0x104)
             {
                 if (key.Vk is >= 0x21 and <= 0x28 or 0x09 or 0x1B or 0x11 or 0x12) CursorMoved?.Invoke();
                 else InputChanged?.Invoke();
@@ -53,7 +60,7 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
         if (Handle != 0)
         {
             Native.UnregisterHotKey(Handle, 1);
-            Native.RegisterRawInputDevices([new Native.Device { Page = 1, Usage = 6, Flags = 1 }], 1, (uint)Marshal.SizeOf<Native.Device>());
+            Native.RegisterRawInputDevices([new Native.Device { Page = 1, Usage = 6, Flags = 1 }, new Native.Device { Page = 1, Usage = 2, Flags = 1 }], 2, (uint)Marshal.SizeOf<Native.Device>());
             DestroyHandle();
         }
         GC.KeepAlive(callback);

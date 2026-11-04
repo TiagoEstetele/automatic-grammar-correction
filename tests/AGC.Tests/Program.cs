@@ -18,6 +18,19 @@ internal static class Program
         var engine = new Corrector(Path.Combine(AppContext.BaseDirectory, "pt_BR", "pt_BR.dic"));
         var r = new RuleSettings();
         Check("início preguiçoso", false, engine.DictionaryLoaded);
+        Corrector.WordChange? Word(string s) => engine.CompletedWord(s, s.Length, r);
+        Check("resposta no primeiro espaço", "Você", Word("voce ")?.After);
+        Check("acentos frequentes sem carregar Hunspell", false, engine.DictionaryLoaded);
+        Check("palavra anterior com próxima já iniciada", "você", Word("eu vi voce ag")?.After);
+        Check("palavra ainda aberta", null, Word("voce"));
+        Check("nenhuma revisão de palavra antiga", null, Word("voce voltou "));
+        Check("erro comum ao avançar", "Exceção", Word("excessão ")?.After);
+        Check("URL intacta", null, Word("eu escrevi https://teste.br/voce "));
+        var grammarOnly = ReviewOptions.Filter(r, ReviewKind.Grammar);
+        Check("só gramática", "eles têm tempo", engine.Correct("eles tem tempo", grammarOnly, true));
+        Check("só pontuação", "Voce vem?", engine.Correct("voce vem ?", ReviewOptions.Filter(r, ReviewKind.Punctuation), true));
+        Check("pop-up acima da seleção", new Point(-900, 264), ReviewPopup.Place(new(-900, 370, 80, 20), new(300, 100), new(-1200, 0, 1200, 800)));
+        Check("pop-up cabe abaixo no topo", new Point(0, 31), ReviewPopup.Place(new(-8, 5, 30, 20), new(300, 100), new(0, 0, 600, 400)));
         foreach (var (input, expected) in new (string, string)[]{
             ("voce  tambem vem ?","Você também vem?"),
             ("isso custa 1,50 reais","Isso custa 1,50 reais."),
@@ -79,6 +92,17 @@ internal static class Program
             using var frame = new Bitmap(settings.Width, settings.Height);
             settings.DrawToBitmap(frame, new Rectangle(Point.Empty, frame.Size));
             frame.Save(args[index + 1], System.Drawing.Imaging.ImageFormat.Png);
+            settings.Navigate("Digitação"); Application.DoEvents();
+            settings.DrawToBitmap(frame, new Rectangle(Point.Empty, frame.Size));
+            frame.Save(Path.ChangeExtension(args[index + 1], ".rules.png"), System.Drawing.Imaging.ImageFormat.Png);
+            using var popup = new ReviewPopup();
+            popup.Present(new(0, 0, "demo", "eles tem tempo hoje", new Rectangle(0, 0, 120, 20)));
+            popup.Location = new Point(-30000, -30000);
+            popup.ShowResult("Eles têm tempo hoje.", true);
+            popup.Location = new Point(-30000, -30000);
+            using var panel = new Bitmap(popup.Width, popup.Height);
+            popup.DrawToBitmap(panel, new Rectangle(Point.Empty, panel.Size));
+            panel.Save(Path.ChangeExtension(args[index + 1], ".popup.png"), System.Drawing.Imaging.ImageFormat.Png);
         }
         Console.WriteLine($"{count - failed}/{count} verificações aprovadas.");
         return failed == 0 ? 0 : 1;
@@ -92,23 +116,78 @@ internal static class Program
         // Exercita mensagens reais do controle sem tomar o foco do usuário em CI.
         Check("janela sem foco nunca é editada", Outcome.Cancelled, Editor.Run(form.Handle, false, engine, new RuleSettings(), () => true).State);
         EditResult Run(bool manual, Func<bool>? valid = null) => Editor.Plain(box.Handle, manual, engine, new RuleSettings(), valid ?? (() => true));
-        box.Text = "voce voltou "; box.SelectionStart = box.TextLength;
+        box.Text = "eu vi voce "; box.SelectionStart = box.TextLength;
         Check("automático no Edit", Outcome.Replaced, Run(false).State);
-        Check("substituição", "Você voltou ", box.Text);
+        Check("substituição", "eu vi você ", box.Text);
         Check("cursor no final", box.TextLength, box.SelectionStart);
-        box.Text = "voce voltou hoj"; box.SelectionStart = box.TextLength;
+        box.Text = "eu vi voce hoj"; box.SelectionStart = box.TextLength;
         Check("digitação contínua", Outcome.Replaced, Run(false).State);
-        Check("palavra incompleta preservada", "Você voltou hoj", box.Text);
+        Check("palavra incompleta preservada", "eu vi você hoj", box.Text);
         Check("cursor após palavra incompleta", box.TextLength, box.SelectionStart);
-        box.Text = "voce voltou\r\n"; box.SelectionStart = box.TextLength;
+        box.Text = "eu vi voce\r\n"; box.SelectionStart = box.TextLength;
         Check("Enter conclui parágrafo", Outcome.Replaced, Run(false).State);
-        Check("quebra de linha mantida", "Você voltou.\r\n", box.Text);
+        Check("quebra de linha mantida", "eu vi você.\r\n", box.Text);
         box.Text = "Prefixo — voce voltou — sufixo"; box.Select(10, 11);
         Check("seleção", Outcome.Replaced, Run(true).State);
         Check("sem alterar vizinhos", "Prefixo — você voltou. — sufixo", box.Text);
-        box.Text = "voce voltou "; box.SelectionStart = box.TextLength;
+        box.Text = "eu vi voce "; box.SelectionStart = box.TextLength;
         Check("cancelamento", Outcome.Cancelled, Run(false, () => false).State);
-        Check("sem alteração após cancelamento", "voce voltou ", box.Text);
+        Check("sem alteração após cancelamento", "eu vi voce ", box.Text);
+        // Interrompa precisamente quando o corretor abriu uma seleção temporária.
+        // Na 1.0.0, a próxima tecla apagava essa seleção em vez de continuar a frase.
+        Check("cancelamento com seleção temporária", Outcome.Cancelled,
+            Run(false, () => box.SelectionLength == 0).State);
+        box.SelectedText = "x";
+        Check("tecla seguinte preserva o rascunho", "eu vi voce x", box.Text);
+        box.Text = "eu vi voce "; box.SelectionStart = box.TextLength;
+        Check("Codex ignora digitação mesmo num Edit", Outcome.Unchanged,
+            Editor.ForControl(box.Handle, @"C:\Apps\Codex.exe", false, engine, new RuleSettings(), () => true).State);
+        Check("Codex mantém o cursor", (box.TextLength, 0), (box.SelectionStart, box.SelectionLength));
+        box.SelectedText = "x";
+        Check("Codex mantém a frase", "eu vi voce x", box.Text);
+        Check("controle sem edição nativa também ignora digitação", Outcome.Unchanged,
+            Editor.ForControl(form.Handle, "browser.exe", false, engine, new RuleSettings(), () => true).State);
+        box.Text = "eu vi voce "; box.SelectionStart = box.TextLength;
+        bool CursorChanged()
+        {
+            if (box.SelectionLength == 0) return true;
+            box.Select(2, 1);
+            return false;
+        }
+        Check("cancelamento por nova seleção", Outcome.Cancelled, Run(false, CursorChanged).State);
+        Check("preserva seleção feita pelo usuário", (2, 1), (box.SelectionStart, box.SelectionLength));
+        var stale = new ReviewTarget(form.Handle, box.Handle, "0:3", "voce", Rectangle.Empty);
+        Check("prévia antiga não substitui seleção nova", Outcome.Cancelled,
+            Editor.Plain(box.Handle, true, engine, new RuleSettings(), () => true, stale, "Você").State);
+        box.Text = "Prefixo: eles tem tempo. Fim."; box.Select(9, 14);
+        var selected = Editor.SelectedTarget(form.Handle, box.Handle);
+        Check("seleção nativa usada pelo popup", "eles tem tempo", selected?.Original);
+        if (selected != null)
+        {
+            using var popup = new ReviewPopup();
+            popup.Present(selected);
+            popup.Location = new Point(-30000, -30000);
+            string? preview = null;
+            popup.Chosen += kind =>
+            {
+                preview = engine.Correct(selected.Original, ReviewOptions.Filter(new RuleSettings(), kind), true);
+                popup.ShowResult(preview, true);
+            };
+            Button FindButton(Control parent, string label) => parent.Controls.OfType<Button>().FirstOrDefault(b => b.Text == label)
+                ?? parent.Controls.OfType<Panel>().SelectMany(p => p.Controls.OfType<FlowLayoutPanel>())
+                    .SelectMany(p => p.Controls.OfType<Button>()).Single(b => b.Text == label);
+            FindButton(popup, "Gramática").PerformClick();
+            Check("escolha no popup produz prévia", "eles têm tempo", preview);
+            Check("prévia preserva editor", "Prefixo: eles tem tempo. Fim.", box.Text);
+            Check("aplicar atua só na seleção aprovada", Outcome.Replaced,
+                Editor.Plain(box.Handle, true, engine, new RuleSettings(), () => true, selected, preview).State);
+            Check("vizinhos da seleção preservados", "Prefixo: eles têm tempo. Fim.", box.Text);
+            popup.Dismiss();
+        }
+        box.Text = "no entanto eu "; box.SelectionStart = box.TextLength; box.MaxLength = box.TextLength;
+        Check("limite impede truncamento", Outcome.Cancelled, Run(false).State);
+        Check("texto inteiro em campo limitado", "no entanto eu ", box.Text);
+        box.MaxLength = 32767;
         box.ReadOnly = true;
         Check("somente leitura", Outcome.Protected, Run(false).State);
         box.ReadOnly = false; box.Multiline = false; box.UseSystemPasswordChar = true; box.Focus();

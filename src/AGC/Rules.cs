@@ -13,6 +13,7 @@ public sealed class RuleSettings
     public bool Commas { get; set; } = true;
     public bool FinalStop { get; set; } = true;
     public bool Spelling { get; set; } // Sugestões aproximadas podem trocar nomes legítimos.
+    public bool WordSpelling { get; set; } = true;
 }
 
 public sealed class Corrector
@@ -52,6 +53,89 @@ public sealed class Corrector
     static readonly Regex PluralTer = Rx(@"(?i)\b(eles|elas|vocês) (tem)\b");
     static readonly Regex NosVai = Rx(@"(?i)\b(nós) (vai)\b");
     static readonly Regex GenteVamos = Rx(@"(?i)\b(a gente) (vamos)\b");
+    static readonly Regex LastWord = Rx(@"[ \t,;:.!?]*(?<word>[\p{L}\p{M}]+)[ \t,;:.!?]*\z");
+    static readonly Dictionary<string, string> FrequentTypos = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["excessão"] = "exceção",
+        ["excessões"] = "exceções",
+        ["concerteza"] = "com certeza",
+        ["precionar"] = "pressionar",
+        ["resposivo"] = "responsivo",
+        ["problmea"] = "problema",
+        ["nescessário"] = "necessário",
+        ["nescessario"] = "necessário",
+        ["menas"] = "menos"
+    };
+    public readonly record struct WordChange(int Start, int End, string Before, string After);
+
+    // O contexto determina idioma/concordância, mas a edição só abrange a última
+    // palavra concluída e sua pontuação. Nunca reescreva o começo do parágrafo.
+    public WordChange? CompletedWord(string text, int caret, RuleSettings rules, bool startsAtBoundary = true)
+    {
+        if (caret <= 0 || caret > text.Length) return null;
+        int end = caret;
+        while (end > 0 && text[end - 1] is '\n' or '\r') end--;
+        bool paragraph = end != caret;
+        if (!paragraph)
+        {
+            while (end > 0 && char.IsLetterOrDigit(text[end - 1])) end--;
+            if (end == 0 || !(" \t,;:.!?".Contains(text[end - 1]))) return null;
+        }
+        if (end == 0) return null;
+        int start = text.LastIndexOfAny(['\r', '\n'], end - 1) + 1;
+        if (end - start > 256)
+        {
+            start = text.IndexOf(' ', end - 256, 256);
+            if (start < 0) return null;
+            start++;
+            startsAtBoundary = false;
+        }
+        var context = text[start..end];
+        var last = LastWord.Match(context);
+        if (!last.Success || CodeLine.IsMatch(context) || Protected.Matches(context).Any(m =>
+            m.Index < last.Groups["word"].Index + last.Groups["word"].Length && m.Index + m.Length > last.Groups["word"].Index)) return null;
+        var token = last.Groups["word"];
+        // Formas revisadas não precisam esperar a carga inicial do dicionário.
+        // Use o caminho contextual quando a pontuação do entorno também precisa mudar.
+        string? exact = null;
+        if (rules.Accents) AccentMap.TryGetValue(token.Value, out exact);
+        if (exact == null && rules.WordSpelling) FrequentTypos.TryGetValue(token.Value, out exact);
+        if (exact != null && !paragraph && last.Value.Trim() == token.Value && !context.Contains("  ") && !context.Contains("no entanto", StringComparison.OrdinalIgnoreCase))
+        {
+            string replacement = MatchCase(token.Value, exact);
+            var left = context[..token.Index].TrimEnd();
+            bool sentence = left.Length == 0 ? startsAtBoundary && (start == 0 || text[start - 1] is '\r' or '\n')
+                : left[^1] is '!' or '?' || (left[^1] == '.' && !Abbrev.IsMatch(left));
+            if (rules.Capitals && sentence) replacement = char.ToUpperInvariant(replacement[0]) + replacement[1..];
+            if (replacement != token.Value) return new(start + token.Index, start + token.Index + token.Length, token.Value, replacement);
+        }
+        string corrected = Correct(context, rules, false, paragraph, start == 0 ? startsAtBoundary : text[start - 1] is '\r' or '\n');
+        var next = LastWord.Match(corrected);
+        if (!next.Success) return null;
+        string updated = next.Value;
+        if (rules.WordSpelling && token.Length is >= 5 and <= 26 && token.Value.All(char.IsLower) &&
+            Words.Matches(context).Any(m => Markers.Contains(m.Value)) && !dictionary.Value.Check(token.Value))
+        {
+            var plausible = dictionary.Value.Suggest(token.Value).Where(s => s.All(char.IsLetter) && OneTypo(token.Value, s)).Take(2).ToArray();
+            if (plausible.Length == 1) updated = updated.Remove(next.Groups["word"].Index - next.Index, next.Groups["word"].Length)
+                .Insert(next.Groups["word"].Index - next.Index, MatchCase(next.Groups["word"].Value, plausible[0]));
+        }
+        return updated == last.Value ? null : new(start + last.Index, end, last.Value, updated);
+    }
+    static bool OneTypo(string a, string b)
+    {
+        if (a == b || Math.Abs(a.Length - b.Length) > 1) return false;
+        int i = 0;
+        while (i < Math.Min(a.Length, b.Length) && a[i] == b[i]) i++;
+        if (a.Length != b.Length)
+        {
+            var longer = a.Length > b.Length ? a : b;
+            var shorter = a.Length > b.Length ? b : a;
+            return longer.AsSpan(i + 1).SequenceEqual(shorter.AsSpan(i));
+        }
+        return a.AsSpan(i + 1).SequenceEqual(b.AsSpan(i + 1)) ||
+            (i + 1 < a.Length && a[i] == b[i + 1] && a[i + 1] == b[i] && a.AsSpan(i + 2).SequenceEqual(b.AsSpan(i + 2)));
+    }
     static string MatchCase(string old, string value) =>
         old.All(char.IsUpper) ? value.ToUpperInvariant() : char.IsUpper(old[0]) ? char.ToUpperInvariant(value[0]) + value[1..] : value;
 
