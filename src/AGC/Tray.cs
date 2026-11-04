@@ -10,6 +10,7 @@ internal sealed class Tray : ApplicationContext
     readonly Preferences prefs;
     readonly Corrector engine = new(Path.Combine(AppContext.BaseDirectory, "pt_BR", "pt_BR.dic"));
     readonly FullscreenSessions sessions = new();
+    readonly System.Windows.Forms.Timer trayClick = new(), resume = new(), indicator = new() { Interval = 1000 };
     readonly SignalWindow signals;
     readonly NotifyIcon icon;
     readonly Control dispatcher = new();
@@ -36,23 +37,42 @@ internal sealed class Tray : ApplicationContext
         _ = dispatcher.Handle;
         var menu = new TrayMenu();
         signals = new();
-        icon = new NotifyIcon { Icon = new Icon(Path.Combine(AppContext.BaseDirectory, "tray.ico")), Text = "automatic grammar correction", ContextMenuStrip = menu, Visible = true };
-        menu.Items.Add(new ToolStripMenuItem("Melhorar texto", null, async (_, _) => await Manual(true)) { ShortcutKeyDisplayString = "Ctrl+Shift+G" });
-        menu.Items.Add("Melhorar texto copiado", null, async (_, _) => await Manual(true, clipboardOnly: true));
-        menu.Items.Add("Configurações", null, (_, _) => OpenSettings());
-        var pause = new ToolStripMenuItem("Pausar correção automática") { CheckOnClick = true };
-        pause.CheckedChanged += (_, _) => { paused = pause.Checked; pause.Text = paused ? "Retomar correção automática" : "Pausar correção automática"; InvalidateWork(); };
-        menu.Items.Add(pause);
-        sessionItem.Click += (_, _) => SessionChoice();
-        menu.Items.Add(sessionItem);
+        indicator.Tick += (_, _) => { indicator.Stop(); if (popup.Target?.WordResult != null) popup.Dismiss(); };
+        icon = new NotifyIcon { Icon = LoadTrayIcon(), Text = "automatic grammar correction", ContextMenuStrip = menu, Visible = true };
+        paused = !prefs.AutoEnabled;
+        menu.ToggleRequested += () => SetPause(!paused);
+        menu.Entry("Pausar por 15 minutos", "", () => SetPause(true, DateTime.Now.AddMinutes(15)));
+        menu.Entry("Pausar até amanhã", "", () => SetPause(true, DateTime.Today.AddDays(1)));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Entry("Corrigir seleção", "", () => _ = Manual(true), "Ctrl Shift G");
+        menu.Entry("Corrigir texto copiado", "", () => _ = Manual(true, true));
+        var ignore = menu.Entry("Ignorar neste aplicativo", "", () =>
+        {
+            if (lastPath != null) { prefs.Apps[lastPath] = !prefs.Apps.GetValueOrDefault(lastPath, true); InvalidateWork(); Save(); settings?.RefreshStatus(); }
+        });
+        menu.Entry("Abrir painel", "", OpenSettings);
+        sessionItem.Click += (_, _) => SessionChoice(); menu.Items.Add(sessionItem);
+        menu.Items.Add(new ToolStripSeparator()); menu.Entry("Sair do AGC", "", ExitThread);
         menu.Opening += (_, _) =>
         {
+            prefs.Today(); menu.SetStatus(paused, prefs.Corrections);
+            ignore.Enabled = lastPath != null;
+            ignore.Text = lastPath == null ? "Ignorar neste aplicativo" : (prefs.Apps.GetValueOrDefault(lastPath, true) ? "Ignorar em " : "Ativar em ") + Path.GetFileNameWithoutExtension(lastPath);
             sessionItem.Visible = prompted != 0 && Native.IsWindow(prompted) && Fullscreen.IsFull(prompted);
             sessionItem.Text = "Correção nesta tela cheia…";
         };
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("Sair", null, (_, _) => ExitThread());
-        icon.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) OpenSettings(); };
+        long doubleClickTime = -SystemInformation.DoubleClickTime;
+        icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left && Environment.TickCount64 - doubleClickTime > SystemInformation.DoubleClickTime) { trayClick.Stop(); trayClick.Start(); } };
+        icon.MouseDoubleClick += (_, e) => { if (e.Button == MouseButtons.Left) { doubleClickTime = Environment.TickCount64; trayClick.Stop(); menu.Close(); OpenSettings(); } };
+        trayClick.Interval = SystemInformation.DoubleClickTime + 20;
+        trayClick.Tick += (_, _) =>
+        {
+            trayClick.Stop(); var pt = Cursor.Position; var area = Screen.FromPoint(pt).WorkingArea;
+            menu.Show(new Point(Math.Clamp(pt.X - menu.PreferredSize.Width / 2, area.Left, Math.Max(area.Left, area.Right - menu.PreferredSize.Width)), Math.Max(area.Top, pt.Y - menu.PreferredSize.Height - 8)));
+        };
+        signals.PausePressed += () => SetPause(!paused);
+        resume.Tick += (_, _) => { resume.Stop(); if (prefs.PausedUntil <= DateTime.Now) SetPause(false); else ScheduleResume(); }; ScheduleResume();
+        engine.WordChecked += ms => { try { if (!closed) dispatcher.BeginInvoke((Action)(() => { if (closed) return; prefs.Today(); prefs.CheckedWords++; prefs.ElapsedMs += ms; settings?.RefreshStatus(); saveTimer.Start(); })); } catch (InvalidOperationException) when (closed) { } };
         icon.BalloonTipClicked += (_, _) => { if (prompted != 0) SessionChoice(); };
         signals.InputChanged += () =>
         {
@@ -60,7 +80,7 @@ internal sealed class Tray : ApplicationContext
             selectionTimer.Stop();
             Interlocked.Increment(ref generation);
             if (automaticInFlight) pendingBoundary = true;
-            if (pendingBoundary) debounce.Start();
+            if (pendingBoundary) { if (prefs.Timing == "300") debounce.Stop(); debounce.Start(); }
         };
         signals.CursorMoved += InvalidateWork;
         signals.SelectionGesture += () =>
@@ -78,17 +98,10 @@ internal sealed class Tray : ApplicationContext
         popup.Chosen += async k => await Preview(k);
         popup.CopyRequested += async () => await CopyPreview();
         popup.ApplyRequested += async () => await ApplyPreview();
-        popup.BindAction = signals.CaptureApply;
+        popup.BindAction = signals.CaptureApply; popup.ReviewKeys = signals.CaptureReview; signals.CopyPressed += async () => await CopyPreview();
         signals.ApplyPressed += async () => await ApplyPreview();
-        signals.Boundary += () =>
-        {
-            if (!paused)
-            {
-                popup.Dismiss();
-                boundaryWindow = Native.GetForegroundWindow(); boundaryFocus = Native.Focus(boundaryWindow);
-                pendingBoundary = true; debounce.Start();
-            }
-        };
+        signals.Boundary += () => { if (!paused && prefs.Timing != "ponto") QueueBoundary(); };
+        signals.PunctuationBoundary += () => { if (!paused && prefs.Timing == "ponto") QueueBoundary(); };
         signals.WindowEvent += Changed;
         signals.HotkeyPressed += async () => await Manual(false);
         debounce.Tick += async (_, _) => { debounce.Stop(); if (pendingBoundary) { pendingBoundary = false; await Automatic(); } };
@@ -96,6 +109,28 @@ internal sealed class Tray : ApplicationContext
         Track(Native.GetForegroundWindow());
         if (recovered) Notify("Preferências recuperadas", "Os padrões foram restaurados. Verifique a pasta de configurações.");
         if (!signals.ShortcutReady) Notify("Atalho indisponível", "Ctrl+Shift+G já está em uso. Use Melhorar texto na bandeja.");
+    }
+    void QueueBoundary()
+    {
+        popup.Dismiss(); boundaryWindow = Native.GetForegroundWindow(); boundaryFocus = Native.Focus(boundaryWindow);
+        pendingBoundary = true; debounce.Interval = prefs.Timing == "300" ? 300 : 20; debounce.Start();
+    }
+    static Icon LoadTrayIcon()
+    {
+        object? light = Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0);
+        return new Icon(Path.Combine(AppContext.BaseDirectory, light is int v && v != 0 ? "tray-dark.ico" : "tray.ico"));
+    }
+    void SetPause(bool value, DateTime? until = null)
+    {
+        paused = value; prefs.AutoEnabled = !value; prefs.PausedUntil = value ? until : null; ScheduleResume(); InvalidateWork(); Save(); settings?.RefreshStatus();
+    }
+    void ScheduleResume()
+    {
+        resume.Stop(); if (prefs.PausedUntil is { } end) { resume.Interval = (int)Math.Clamp((end - DateTime.Now).TotalMilliseconds, 1, int.MaxValue); resume.Start(); }
+    }
+    void Applied()
+    {
+        prefs.Today(); prefs.Corrections++; if (prefs.Sound) System.Media.SystemSounds.Asterisk.Play(); settings?.RefreshStatus(); saveTimer.Start();
     }
     void InvalidateWork() { Interlocked.Increment(ref generation); pendingBoundary = false; debounce.Stop(); selectionTimer.Stop(); popup.Dismiss(); }
     void Notify(string title, string message) => icon.ShowBalloonTip(4500, title, message, ToolTipIcon.Info);
@@ -148,7 +183,7 @@ internal sealed class Tray : ApplicationContext
         if (h != boundaryWindow || Native.Focus(h) != boundaryFocus) return;
         if (!Eligible(h, true) || Native.ModifiersDown()) return;
         if (Editor.IsPlain(boundaryFocus) && !string.Equals(Path.GetFileNameWithoutExtension(lastPath), "Codex", StringComparison.OrdinalIgnoreCase))
-            await Edit(h, false);
+        { if ((await Edit(h, false)).State == Outcome.Replaced) Applied(); }
         else
         {
             busy = true; automaticInFlight = true;
@@ -159,7 +194,8 @@ internal sealed class Tray : ApplicationContext
                 bool safe() => !closed && Volatile.Read(ref generation) == stamp && Native.GetForegroundWindow() == h &&
                     Native.Focus(h) == boundaryFocus && (allowed || !Fullscreen.IsFull(h));
                 var punctuation = await EditRange(h, null, null, true, safe);
-                if (punctuation == RangeOutcome.Cancelled && safe() && await Probe(h, true) is { } word && Eligible(h, true) && Native.GetForegroundWindow() == h) popup.Present(word);
+                if (punctuation == RangeOutcome.Confirmed) Applied();
+                if (prefs.Indicator && punctuation == RangeOutcome.Cancelled && safe() && await Probe(h, true) is { } word && Eligible(h, true) && Native.GetForegroundWindow() == h) { popup.Present(word); indicator.Stop(); indicator.Start(); }
             }
             finally { busy = false; automaticInFlight = false; if (!closed && pendingBoundary) debounce.Start(); }
         }
@@ -184,7 +220,7 @@ internal sealed class Tray : ApplicationContext
         probeBusy = true;
         try
         {
-            if (await Probe(h, false) is { } target && Native.GetForegroundWindow() == h && Eligible(h, true)) popup.Present(target);
+            if (await Probe(h, false) is { } target && Native.GetForegroundWindow() == h && Eligible(h, true)) { popup.Present(target); await Preview(ReviewKind.All); }
         }
         finally { probeBusy = false; if (probePending && !closed) { probePending = false; selectionTimer.Start(); } }
     }
@@ -236,6 +272,7 @@ internal sealed class Tray : ApplicationContext
             if (Editor.IsPlain(target.Focus) && target.WordResult == null)
             {
                 var edit = await Task.Run(() => Editor.Plain(target.Focus, true, engine, prefs.Rules, Valid, target, result));
+                if (edit.State == Outcome.Replaced) Applied();
                 if (edit.State == Outcome.CopyResult) Notify("Campo com limite", "A revisão não cabe neste campo.");
                 else popup.Dismiss();
                 return;
@@ -245,6 +282,7 @@ internal sealed class Tray : ApplicationContext
             uint owned = Native.GetClipboardSequenceNumber();
             var outcome = await EditRange(target.Window, target, result, false, () => Valid() && owned == Native.GetClipboardSequenceNumber());
             popup.Dismiss();
+            if (outcome == RangeOutcome.Confirmed) Applied();
             if (outcome != RangeOutcome.Confirmed) Notify("Revisão na área de transferência", outcome == RangeOutcome.Sent ? "A colagem foi enviada, mas o editor não confirmou o resultado." : "A seleção mudou ou o editor não aceitou a colagem.");
         }
         catch (Exception ex) when (ex is ExternalException or IOException or InvalidOperationException or System.Text.RegularExpressions.RegexMatchTimeoutException) { Notify("Não foi possível aplicar", "A revisão foi interrompida. Confira a seleção e tente novamente."); }
@@ -299,7 +337,7 @@ internal sealed class Tray : ApplicationContext
         {
             selectionTimer.Stop();
             popup.Present(selection);
-            await ApplyPreview();
+            await Preview(ReviewKind.All);
             return;
         }
         var result = h == 0 ? new EditResult(Outcome.NoSelection) : await Edit(h, true);
@@ -339,19 +377,17 @@ internal sealed class Tray : ApplicationContext
         if (closed) return;
         if (settings is { IsDisposed: false })
         {
-            if (settings.WindowState == FormWindowState.Minimized) settings.WindowState = FormWindowState.Normal;
-            settings.Show(); settings.BringToFront(); settings.Activate(); SetForegroundWindow(settings.Handle); return;
+            if (settings.WindowState == System.Windows.WindowState.Minimized) settings.WindowState = System.Windows.WindowState.Normal;
+            settings.Show(); settings.Activate(); SetForegroundWindow(new System.Windows.Interop.WindowInteropHelper(settings).Handle); return;
         }
-        settings = new SettingsWindow(prefs, () => { InvalidateWork(); Save(); }, () => paused, b =>
-        {
-            if (icon.ContextMenuStrip?.Items.OfType<ToolStripMenuItem>().FirstOrDefault(item => item.CheckOnClick) is { } toggle) toggle.Checked = b;
-        }, engine);
+        settings = new SettingsWindow(prefs, () => { InvalidateWork(); Save(); }, () => paused, b => SetPause(b), engine);
+        System.Windows.Forms.Integration.ElementHost.EnableModelessKeyboardInterop(settings);
         settings.Show();
     }
     void Save() { try { prefs.Save(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Notify("Preferências não salvas", "Verifique o acesso à pasta de dados locais."); } }
     protected override void Dispose(bool disposing)
     {
-        if (disposing && !closed) { closed = true; InvalidateWork(); saveTimer.Stop(); Save(); signals.Dispose(); debounce.Dispose(); selectionTimer.Dispose(); popup.Dispose(); saveTimer.Dispose(); settings?.Dispose(); icon.Visible = false; icon.ContextMenuStrip?.Dispose(); icon.Icon?.Dispose(); icon.Dispose(); dispatcher.Dispose(); }
+        if (disposing && !closed) { closed = true; InvalidateWork(); saveTimer.Stop(); Save(); signals.Dispose(); trayClick.Dispose(); resume.Dispose(); indicator.Dispose(); debounce.Dispose(); selectionTimer.Dispose(); popup.Dispose(); saveTimer.Dispose(); settings?.Dispose(); icon.Visible = false; icon.ContextMenuStrip?.Dispose(); icon.Icon?.Dispose(); icon.Dispose(); dispatcher.Dispose(); }
         base.Dispose(disposing);
     }
 }

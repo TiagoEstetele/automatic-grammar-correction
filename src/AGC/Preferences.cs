@@ -9,6 +9,20 @@ internal sealed class Preferences
     static string FilePath => Path.Combine(Folder, "settings.json");
     public RuleSettings Rules { get; set; } = new();
     public Dictionary<string, bool> Apps { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool AutoEnabled { get; set; } = true;
+    public string Timing { get; set; } = "now";
+    public bool Sound { get; set; }
+    public bool Indicator { get; set; } = true;
+    public DateTime? PausedUntil { get; set; }
+    public string StatsDay { get; set; } = "";
+    public long CheckedWords { get; set; }
+    public long Corrections { get; set; }
+    public double ElapsedMs { get; set; }
+    internal void Today()
+    {
+        string day = DateTime.Today.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        if (StatsDay != day) { StatsDay = day; CheckedWords = 0; Corrections = 0; ElapsedMs = 0; }
+    }
     internal static Preferences Load(out bool recovered)
     {
         recovered = false;

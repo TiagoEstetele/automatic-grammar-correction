@@ -8,6 +8,11 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AGC.Tests" />
+    <Resource Include="Fonts/InterVariable.ttf"/>
+    <Content Include="Fonts/InterVariable.ttf" CopyToOutputDirectory="PreserveNewest"/>
+    <Resource Include="../../assets/app.ico" Link="Brand/app.ico"/>
+    <EmbeddedResource Include="../../assets/app.ico" LogicalName="AGC.Brand.Icon"/>
+    <Content Include="../../assets/tray-dark.ico" Link="tray-dark.ico" CopyToOutputDirectory="PreserveNewest" />
     <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
     <Content Include="../../resources/pt_BR/*" Link="pt_BR/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../../licenses/*" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

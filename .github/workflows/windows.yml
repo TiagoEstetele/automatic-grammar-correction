@@ -44,7 +44,7 @@ jobs:
           $notes = @(
             'Extraia o ZIP completo e execute AutomaticGrammarCorrection.exe. O pacote para Windows x64 inclui o runtime, o dicionário pt-BR e as licenças.'
             ''
-            'Selecione texto e pressione F8 no pop-up para revisar e aplicar. A pontuação junto ao cursor é automática nos campos editáveis compatíveis. Um duplo clique no executável ou no ícone da bandeja abre as configurações da instância ativa.'
+            'Novo design Nocturne no painel, na bandeja e na prévia. Selecione o texto, confira as alterações e pressione Enter ou F8 para aplicar. A demonstração com som está no README e no ZIP.'
             ''
             "SHA-256 do ZIP: $hash"
           )

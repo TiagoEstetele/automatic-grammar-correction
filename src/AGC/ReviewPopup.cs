@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
 
@@ -71,25 +72,36 @@ internal static class ReviewOptions
 
 internal sealed class ReviewPopup : Form
 {
-    sealed class ActionButton:Button{
+    sealed class ActionButton : Button
+    {
         bool pressing;
-        internal ActionButton(){TabStop=false;}
-        protected override void WndProc(ref Message m){
+        internal ActionButton() { TabStop = false; }
+        protected override void WndProc(ref Message m)
+        {
             // O Button padrão chama Focus no mouse-down. Capture o clique sem
             // ativar esta janela, mantendo PerformClick e a interface acessível.
-            if(m.Msg==0x201){pressing=true;Capture=true;return;}
-            if(m.Msg==0x202 && pressing){
-                bool inside=ClientRectangle.Contains(PointToClient(Cursor.Position));
-                pressing=false;Capture=false;if(inside)PerformClick();return;
+            if (m.Msg == 0x201) { pressing = true; Capture = true; return; }
+            if (m.Msg == 0x202 && pressing)
+            {
+                bool inside = ClientRectangle.Contains(PointToClient(Cursor.Position));
+                pressing = false; Capture = false; if (inside) PerformClick(); return;
             }
-            if(m.Msg==0x215)pressing=false;
+            if (m.Msg == 0x215) pressing = false;
             base.WndProc(ref m);
         }
     }
-    [System.Runtime.InteropServices.DllImport("user32")] static extern bool SetWindowPos(nint h,nint after,int x,int y,int w,int height,uint flags);
+    [System.Runtime.InteropServices.DllImport("user32")] static extern bool SetWindowPos(nint h, nint after, int x, int y, int w, int height, uint flags);
     readonly FlowLayoutPanel body = new() { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(10, 7, 10, 6) };
     readonly Label heading = new() { AutoSize = true, ForeColor = Theme.Accent };
-    readonly Label preview = new() { AutoSize = false, Width = 335, Height = 42, ForeColor = Theme.Text, UseMnemonic = false };
+    readonly ChangePreview preview = new() { Width = 328, Height = 42 };
+    readonly Label explanation = new() { AutoSize = false, AutoEllipsis = true, ForeColor = Theme.Muted, Font = Theme.Font(8), Height = 20 };
+    readonly Label count = new() { AutoSize = true, ForeColor = Theme.Accent, Font = Theme.Font(8) };
+    readonly Panel head = new() { Height = 25 };
+    readonly Button close = new ActionButton { Text = "×", FlatStyle = FlatStyle.Flat, ForeColor = Theme.Muted, BackColor = Theme.Panel, Size = new Size(22, 22), AccessibleName = "Fechar prévia" };
+    readonly System.Windows.Forms.Timer reveal = new() { Interval = 16 };
+    int frame;
+    internal Func<bool, bool>? ReviewKeys;
+    bool enterReady;
     readonly Panel scroll = new() { Width = 345, Height = 44, AutoScroll = true };
     readonly FlowLayoutPanel buttons = new() { AutoSize = true, WrapContents = false };
     internal event Action<ReviewKind>? Chosen;
@@ -98,7 +110,7 @@ internal sealed class ReviewPopup : Form
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     internal Func<bool, bool>? BindAction { get; set; }
     bool hasActionKey;
-    void ApplyButton(string label) => Button(label + (hasActionKey ? "   F8" : ""), () => ApplyRequested?.Invoke());
+    void ApplyButton(string label) => Button(label + (enterReady ? "   Enter" : hasActionKey ? "   F8" : ""), () => ApplyRequested?.Invoke());
     internal ReviewTarget? Target { get; private set; }
     internal string? Result { get; private set; }
     internal ReviewKind ActiveKind { get; private set; }
@@ -120,21 +132,37 @@ internal sealed class ReviewPopup : Form
         ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
         FormBorderStyle = FormBorderStyle.None; BackColor = Theme.Panel; ForeColor = Theme.Text;
         Font = Theme.Font(9); AutoScaleMode = AutoScaleMode.Dpi; Padding = new Padding(2);
-        heading.Font = Theme.Font(10, true); preview.Font = Theme.Font(10);
-        scroll.Controls.Add(preview);
-        Controls.Add(body); body.Controls.Add(heading); body.Controls.Add(scroll); body.Controls.Add(buttons);
+        body.BackColor = Theme.Panel; heading.Font = Theme.Font(9); heading.ForeColor = Theme.Muted; heading.Location = new Point(27, 2);
+        using var stream = typeof(ReviewPopup).Assembly.GetManifestResourceStream("AGC.Brand.Icon")!;
+        using var ico = new Icon(stream, new Size(18, 18));
+        var logo = new PictureBox { Image = ico.ToBitmap(), Size = new Size(19, 19), SizeMode = PictureBoxSizeMode.Zoom };
+        close.FlatAppearance.BorderSize = 0; close.Click += (_, _) => Dismiss();
+        count.BackColor = Color.FromArgb(50, 46, 73); count.Padding = new Padding(4, 1, 4, 1);
+        head.Controls.AddRange([logo, heading, count, close]); scroll.Controls.Add(preview);
+        Controls.Add(body); body.Controls.Add(head); body.Controls.Add(scroll); body.Controls.Add(explanation); body.Controls.Add(buttons);
+        reveal.Tick += (_, _) => { frame++; Opacity = Math.Min(1, 0.70 + frame * 0.05); if (frame >= 6) reveal.Stop(); };
     }
     protected override void OnPaint(PaintEventArgs e)
     {
-        base.OnPaint(e); using var pen = new Pen(Theme.Border); e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
-        using var edge = new Pen(Theme.Accent, 2); e.Graphics.DrawLine(edge, 1, 1, Width - 2, 1);
+        base.OnPaint(e); using var outline = Theme.Round(new Rectangle(0, 0, Width - 1, Height - 9), 12); using var pen = new Pen(Theme.Border);
+        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias; e.Graphics.DrawPath(pen, outline);
+        int x = ArrowX(); e.Graphics.DrawLines(pen, [new Point(x - 7, Height - 9), new Point(x, Height - 2), new Point(x + 7, Height - 9)]);
     }
+    int ArrowX() => Math.Clamp((Target?.Anchor.Left ?? Left) - Left + 12, 18, Math.Max(19, Width - 18));
     void Button(string label, Action click)
     {
-        bool primary=label=="Tudo" || label.StartsWith("Aplicar") || label.StartsWith("Revisar e aplicar");
-        var b=new ActionButton{FlatStyle=FlatStyle.Flat,Cursor=Cursors.Hand,Text=label,Font=Theme.Font(9,true),
-            Padding=new Padding(6,0,6,0),BackColor=primary?Theme.Accent:Theme.Raised,ForeColor=primary?Theme.Bg:Theme.Text};
-        b.FlatAppearance.BorderSize=0;
+        bool primary = label == "Tudo" || label.StartsWith("Aplicar") || label.StartsWith("Revisar e aplicar");
+        var b = new ActionButton
+        {
+            FlatStyle = FlatStyle.Flat,
+            Cursor = Cursors.Hand,
+            Text = label,
+            Font = Theme.Font(9, true),
+            Padding = new Padding(7, 2, 7, 2),
+            BackColor = primary ? Color.FromArgb(43, 41, 62) : Theme.Panel,
+            ForeColor = primary ? Theme.Accent : Theme.Text
+        };
+        b.FlatAppearance.BorderSize = 1; b.FlatAppearance.BorderColor = primary ? Color.FromArgb(107, 97, 153) : Theme.Border;
         b.AutoSize = true; b.AutoSizeMode = AutoSizeMode.GrowAndShrink; b.TabStop = false; b.Margin = new Padding(0, 3, 5, 0); b.AccessibleName = label;
         b.Click += (_, _) => click(); buttons.Controls.Add(b);
     }
@@ -143,11 +171,11 @@ internal sealed class ReviewPopup : Form
     {
         if (Visible && Target == target) return;
         Target = target; Result = null; ActiveKind = ReviewKind.All; ClearButtons();
-        hasActionKey = BindAction?.Invoke(target.Writable) == true;
-        heading.Text = target.WordResult == null ? "AGC  ·  Melhorar seleção" : "AGC  ·  Sugestão de palavra";
+        enterReady = false; ReviewKeys?.Invoke(false); hasActionKey = BindAction?.Invoke(target.Writable) == true; count.Text = ""; explanation.Text = "";
+        heading.Text = target.WordResult == null ? "Prévia da revisão" : "Sugestão de palavra";
         if (target.WordResult == null)
         {
-            preview.Text = target.Original; preview.AccessibleDescription = target.Original;
+            preview.Spans = [new(target.Original, target.Original, false)]; preview.Text = target.Original; preview.AccessibleDescription = target.Original;
             if (target.Writable) ApplyButton("Revisar e aplicar");
             Button("Ortografia", () => Pick(ReviewKind.Spelling));
             Button("Gramática", () => Pick(ReviewKind.Grammar));
@@ -156,19 +184,25 @@ internal sealed class ReviewPopup : Form
         }
         else
         {
-            Result = target.WordResult; preview.Text = target.Original.Trim() + "  →  " + Result.Trim();
+            Result = target.WordResult; preview.Spans = TextDiff.Compare(target.Original, Result); preview.Text = target.Original.Trim() + "  →  " + Result.Trim();
             if (target.Writable) ApplyButton("Aplicar");
             Button("Copiar correção", () => CopyRequested?.Invoke());
         }
-        Button("×", Dismiss); LayoutAt(target.Anchor);
+        LayoutAt(target.Anchor);
     }
     internal void ShowResult(string s, bool inline = false)
     {
         if (Target == null) return;
-        Result = s; ClearButtons(); heading.Text = s == Target.Original ? "Nenhuma alteração" : "Prévia da revisão";
-        preview.Text = s; preview.AccessibleDescription = s;
+        Result = s; ClearButtons(); heading.Text = "Prévia da revisão"; preview.Spans = TextDiff.Compare(Target.Original, s);
+        preview.Text = s; preview.AccessibleDescription = s; preview.Invalidate();
+        var changes = preview.Spans.Where(x => x.Changed).ToList(); count.Text = changes.Count == 1 ? "1 correção" : $"{changes.Count} correções";
+        explanation.Text = changes.Count == 0 ? "Nenhuma alteração pelas regras ativas." : string.Join(" · ", changes.Take(2).Select(x => $"{x.Before.Trim()} → {x.After.Trim()} · {TextDiff.Explain(x)}"));
+        enterReady = ReviewKeys?.Invoke(inline && s != Target.Original) == true;
         if (inline && s != Target.Original) ApplyButton("Aplicar");
-        Button("Copiar resultado", () => CopyRequested?.Invoke()); Button("×", Dismiss); LayoutAt(Target.Anchor);
+        Button("Copiar", () => CopyRequested?.Invoke());
+        Button("Opções", () => { var t = Target; if (t == null) return; Target = null; Present(t); });
+        buttons.Controls.Add(new Label { Text = "Esc para fechar", AutoSize = true, ForeColor = Theme.Muted, Margin = new Padding(5, 9, 0, 0), Font = Theme.Font(8) });
+        LayoutAt(Target.Anchor);
     }
     internal static Point Place(Rectangle anchor, Size size, Rectangle work)
     {
@@ -183,14 +217,18 @@ internal sealed class ReviewPopup : Form
         int width = Math.Min(work.Width, Math.Max(buttons.PreferredSize.Width + LogicalToDeviceUnits(38), LogicalToDeviceUnits(375)));
         scroll.Width = width - body.Padding.Horizontal - Padding.Horizontal - 8;
         preview.Width = Math.Max(80, scroll.Width - SystemInformation.VerticalScrollBarWidth - 4);
-        var measured = TextRenderer.MeasureText(preview.Text, preview.Font, new Size(preview.Width, 0), TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
-        preview.Height = Math.Max(LogicalToDeviceUnits(32), measured.Height + 5);
-        scroll.Height = Math.Min(LogicalToDeviceUnits(140), preview.Height);
-        scroll.AutoScrollPosition = Point.Empty;
-        ClientSize = new Size(width, Math.Min(work.Height, body.Padding.Vertical + heading.PreferredHeight + scroll.Height + buttons.PreferredSize.Height + LogicalToDeviceUnits(17)));
+        preview.Height = Math.Max(LogicalToDeviceUnits(27), preview.TextHeight(preview.Width) + 6);
+        scroll.Height = Math.Min(LogicalToDeviceUnits(140), preview.Height); scroll.AutoScrollPosition = Point.Empty;
+        head.Width = scroll.Width; close.Left = head.Width - close.Width; count.Location = new Point(close.Left - count.PreferredWidth - 8, 4);
+        explanation.Width = scroll.Width; explanation.Height = explanation.Text.Length > 0 ? 24 : 2;
+        ClientSize = new Size(width, Math.Min(work.Height, body.Padding.Vertical + head.Height + scroll.Height + explanation.Height + buttons.PreferredSize.Height + LogicalToDeviceUnits(24)));
         Location = Place(anchor, Size, work);
-        if (!Visible) Show();
-        SetWindowPos(Handle,-1,0,0,0,0,0x13); // NOMOVE | NOSIZE | NOACTIVATE
+        int ax = ArrowX(); using var geometry = Theme.Round(new Rectangle(0, 0, Width, Height - 8), 12);
+        geometry.AddPolygon([new Point(ax - 8, Height - 9), new Point(ax, Height), new Point(ax + 8, Height - 9)]);
+        var region = Region; Region = new Region(geometry); region?.Dispose();
+        if (!Visible) { Opacity = 0.70; frame = 0; Show(); reveal.Start(); }
+        SetWindowPos(Handle, -1, 0, 0, 0, 0, 0x13);
     }
-    internal void Dismiss() { if (Target != null) BindAction?.Invoke(false); Hide(); Target = null; Result = null; preview.Text = ""; preview.AccessibleDescription = null; }
+    protected override void Dispose(bool disposing) { if (disposing) reveal.Dispose(); base.Dispose(disposing); }
+    internal void Dismiss() { if (Target != null) { BindAction?.Invoke(false); ReviewKeys?.Invoke(false); } reveal.Stop(); Hide(); preview.Spans = []; Target = null; Result = null; preview.Text = ""; preview.AccessibleDescription = null; }
 }

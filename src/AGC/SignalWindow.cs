@@ -8,7 +8,7 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
     readonly Native.EventProc callback;
     readonly List<nint> hooks = new();
     internal event Action? Boundary, InputChanged, CursorMoved, HotkeyPressed;
-    internal event Action? SelectionGesture;
+    internal event Action? SelectionGesture, PausePressed, PunctuationBoundary, CopyPressed;
     internal event Action? ApplyPressed;
     bool captureAction;
     internal bool CaptureApply(bool active)
@@ -36,6 +36,7 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
             }
             if (!Native.RegisterRawInputDevices([new Native.Device { Page = 1, Usage = 6, Flags = 0x100, Target = Handle }, new Native.Device { Page = 1, Usage = 2, Flags = 0x100, Target = Handle }], 2, (uint)Marshal.SizeOf<Native.Device>()))
                 throw new InvalidOperationException("O Windows recusou os eventos de teclado.");
+            Native.RegisterHotKey(Handle, 3, 0x4000 | 2 | 1, 0x50);
             ShortcutReady = Native.RegisterHotKey(Handle, 1, 0x4000 | 2 | 4, 0x47); // Ctrl+Shift+G, sem repetição
         }
         catch { Dispose(); throw; }
@@ -44,6 +45,9 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
     {
         if (m.Msg == Native.Hotkey && m.WParam == 1) HotkeyPressed?.Invoke();
         if (m.Msg == Native.Hotkey && m.WParam == 2 && captureAction) ApplyPressed?.Invoke();
+        if (m.Msg == Native.Hotkey && m.WParam == 3) PausePressed?.Invoke();
+        if (m.Msg == Native.Hotkey && m.WParam == 4) ApplyPressed?.Invoke();
+        if (m.Msg == Native.Hotkey && m.WParam == 5) CopyPressed?.Invoke();
         if (m.Msg == Native.Input)
         {
             uint size = (uint)Marshal.SizeOf<Native.RawPacket>();
@@ -56,20 +60,30 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
                 SelectionGesture?.Invoke();
             if (packet.Header.Type == 1 && packet.Header.Device != 0 && key.Message is 0x100 or 0x104)
             {
-                if (captureAction && key.Vk == 0x77) { base.WndProc(ref m); return; }
+                if (reviewKeys && (key.Vk is 0x0D or 0x11 or 0xA2 or 0xA3 || key.Vk == 0x43 && Native.GetAsyncKeyState(0x11) < 0) || captureAction && key.Vk == 0x77) { base.WndProc(ref m); return; }
                 if (key.Vk is >= 0x21 and <= 0x28 or 0x09 or 0x1B or 0x11 or 0x12) CursorMoved?.Invoke();
                 else InputChanged?.Invoke();
                 if (key.Vk is 0x20 or 0x0D or 0xBA or 0xBC or 0xBE or 0xBF or 0x31 || key.Vk == 0x6E) Boundary?.Invoke();
+                if (key.Vk is 0x0D or 0xBA or 0xBC or 0xBE or 0xBF or 0x6E || key.Vk == 0x31 && Native.GetAsyncKeyState(0x10) < 0) PunctuationBoundary?.Invoke();
             }
         }
         base.WndProc(ref m);
+    }
+    bool reviewKeys;
+    internal bool CaptureReview(bool active)
+    {
+        if (!active) { Native.UnregisterHotKey(Handle, 4); Native.UnregisterHotKey(Handle, 5); reviewKeys = false; return false; }
+        if (reviewKeys) return true;
+        reviewKeys = Native.RegisterHotKey(Handle, 4, 0x4000, 0x0D);
+        if (reviewKeys) Native.RegisterHotKey(Handle, 5, 0x4000 | 2, 0x43);
+        return reviewKeys;
     }
     public void Dispose()
     {
         foreach (var h in hooks) Native.UnhookWinEvent(h);
         if (Handle != 0)
         {
-            CaptureApply(false);
+            CaptureReview(false); Native.UnregisterHotKey(Handle, 3); CaptureApply(false);
             Native.UnregisterHotKey(Handle, 1);
             Native.RegisterRawInputDevices([new Native.Device { Page = 1, Usage = 6, Flags = 1 }, new Native.Device { Page = 1, Usage = 2, Flags = 1 }], 2, (uint)Marshal.SizeOf<Native.Device>());
             DestroyHandle();

@@ -102,6 +102,15 @@ public sealed class Corrector
     // palavra concluída e sua pontuação. Nunca reescreva o começo do parágrafo.
     public WordChange? CompletedWord(string text, int caret, RuleSettings rules, bool startsAtBoundary = true)
     {
+        var stamp = System.Diagnostics.Stopwatch.GetTimestamp();
+        var result = FindWord(text, caret, rules, startsAtBoundary, out bool checkedWord);
+        if (checkedWord) WordChecked?.Invoke(System.Diagnostics.Stopwatch.GetElapsedTime(stamp).TotalMilliseconds);
+        return result;
+    }
+    internal event Action<double>? WordChecked;
+    WordChange? FindWord(string text, int caret, RuleSettings rules, bool startsAtBoundary, out bool checkedWord)
+    {
+        checkedWord = false;
         if (caret <= 0 || caret > text.Length) return null;
         int end = caret;
         while (end > 0 && text[end - 1] is '\n' or '\r') end--;
@@ -125,6 +134,7 @@ public sealed class Corrector
         if (!last.Success || CodeLine.IsMatch(context) || Protected.Matches(context).Any(m =>
             m.Index < last.Groups["word"].Index + last.Groups["word"].Length && m.Index + m.Length > last.Groups["word"].Index)) return null;
         var token = last.Groups["word"];
+        checkedWord = true;
         // Formas revisadas não precisam esperar a carga inicial do dicionário.
         // Use o caminho contextual quando a pontuação do entorno também precisa mudar.
         string? exact = null;

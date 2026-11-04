@@ -1,12 +1,16 @@
+using System.IO;
 using System.Drawing.Drawing2D;
 namespace Agc;
 
 internal static class Theme
 {
-    internal static readonly Color Bg = Color.FromArgb(22, 20, 29), Rail = Color.FromArgb(28, 25, 36), Panel = Color.FromArgb(36, 32, 47),
-        Raised = Color.FromArgb(49, 43, 62), Border = Color.FromArgb(65, 57, 79), Text = Color.FromArgb(247, 244, 253),
-        Muted = Color.FromArgb(187, 179, 203), Accent = Color.FromArgb(196, 170, 255), Active = Color.FromArgb(133, 221, 181);
-    internal static Font Font(float size, bool bold = false) => new("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular);
+    internal static readonly Color Bg = Color.FromArgb(22, 24, 38), Rail = Color.FromArgb(30, 32, 45), Panel = Color.FromArgb(35, 37, 50),
+        Raised = Color.FromArgb(47, 49, 63), Border = Color.FromArgb(64, 66, 82), Text = Color.FromArgb(233, 233, 237),
+        Muted = Color.FromArgb(162, 164, 184), Accent = Color.FromArgb(181, 171, 252), Active = Color.FromArgb(145, 132, 217);
+    [System.Runtime.InteropServices.DllImport("gdi32", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern int AddFontResourceEx(string file, uint flags, nint reserved);
+    static readonly Lazy<string> Typeface = new(() => AddFontResourceEx(Path.Combine(AppContext.BaseDirectory, "Fonts", "InterVariable.ttf"), 0x10, 0) > 0 ? "Inter Variable" : "Segoe UI");
+    internal static Font Font(float size, bool bold = false) => new(Typeface.Value, size, bold ? FontStyle.Bold : FontStyle.Regular);
     internal static GraphicsPath Round(Rectangle r, int radius)
     {
         var p = new GraphicsPath(); int d = Math.Max(2, Math.Min(2 * radius, Math.Min(r.Width, r.Height)));
@@ -32,13 +36,14 @@ internal static class Theme
             FlatStyle = FlatStyle.Flat,
             Cursor = Cursors.Hand,
             Font = Font(9, true),
-            BackColor = primary ? Accent : Raised,
-            ForeColor = primary ? Bg : Text,
+            BackColor = primary ? Color.FromArgb(43, 41, 62) : Panel,
+            ForeColor = primary ? Accent : Text,
             AutoSize = false,
             Padding = new Padding(6, 0, 6, 0)
         };
-        b.FlatAppearance.BorderSize = 0;
-        b.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(215, 199, 255) : Border;
+        b.FlatAppearance.BorderSize = 1;
+        b.FlatAppearance.BorderColor = primary ? Accent : Border;
+        b.FlatAppearance.MouseOverBackColor = Raised;
         return b;
     }
     internal static Image NavIcon(string name)
@@ -63,102 +68,73 @@ internal static class Theme
     }
 }
 
-internal sealed class Surface : Panel
-{
-    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-    internal bool Hero { get; init; }
-    internal Surface() { DoubleBuffered = true; BackColor = Theme.Bg; }
-    protected override void OnPaintBackground(PaintEventArgs e)
-    {
-        e.Graphics.Clear(Theme.Bg);
-        if (Width < 2 || Height < 2) return;
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = Theme.Round(new Rectangle(0, 0, Width - 1, Height - 1), 12);
-        using Brush fill = Hero ? new LinearGradientBrush(ClientRectangle, Color.FromArgb(57, 43, 80), Color.FromArgb(37, 31, 54), 15f) : new SolidBrush(Theme.Panel);
-        e.Graphics.FillPath(fill, path);
-        using var pen = new Pen(Hero ? Color.FromArgb(93, 72, 128) : Theme.Border); e.Graphics.DrawPath(pen, path);
-        if (Hero)
-        {
-            e.Graphics.SetClip(path);
-            using var line = new Pen(Color.FromArgb(52, 179, 145, 240), 2f);
-            for (int i = 0; i < 4; i++) e.Graphics.DrawArc(line, Width - 155 + i * 18, -80 + i * 10, 210, 235, 70, 180);
-            e.Graphics.ResetClip();
-        }
-    }
-}
-
-internal sealed class SwitchRow : CheckBox
-{
-    readonly string detail;
-    internal SwitchRow(string title, string description, bool value, Action<bool> set)
-    {
-        Text = title; detail = description; Checked = value; AccessibleName = title; AccessibleDescription = description;
-        ForeColor = Theme.Text; BackColor = Theme.Panel; Cursor = Cursors.Hand;
-        SetStyle(ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer, true);
-        CheckedChanged += (_, _) => { set(Checked); Invalidate(); };
-    }
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        int d(int v) => LogicalToDeviceUnits(v);
-        e.Graphics.Clear(Theme.Panel); e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        var r = new Rectangle(Width - d(56), (Height - d(21)) / 2, d(38), d(21));
-        using var path = Theme.Round(r, d(11)); using var brush = new SolidBrush(Checked ? Theme.Accent : Theme.Border);
-        e.Graphics.FillPath(brush, path);
-        int dot = d(15); var thumb = new Rectangle(Checked ? r.Right - dot - d(3) : r.Left + d(3), r.Top + d(3), dot, dot);
-        using var knob = new SolidBrush(Checked ? Theme.Bg : Theme.Text); e.Graphics.FillEllipse(knob, thumb);
-        using var title = Theme.Font(10, true); using var caption = Theme.Font(9);
-        TextRenderer.DrawText(e.Graphics, Text, title, new Rectangle(d(16), d(5), r.Left - d(25), Height / 2), Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
-        TextRenderer.DrawText(e.Graphics, detail, caption, new Rectangle(d(16), Height / 2, r.Left - d(25), Height / 2 - d(3)), Theme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
-        if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(ClientRectangle, -2, -2), Theme.Text, Theme.Panel);
-    }
-}
-
 internal sealed class TrayMenu : ContextMenuStrip
 {
+    readonly ToolStripMenuItem header = new() { AutoSize = false, Size = new Size(282, 53), AccessibleName = "Alternar correção" };
+    internal bool Paused { get; private set; }
+    internal long Count { get; private set; }
+    internal event Action? ToggleRequested;
+    readonly Bitmap brand;
     internal TrayMenu()
     {
-        BackColor = Theme.Panel; ForeColor = Theme.Text; ShowCheckMargin = false; ShowImageMargin = false;
-        Renderer = new TrayRenderer(); Font = Theme.Font(10); Padding = new Padding(6);
-        Items.Add(new ToolStripLabel("AGC   ·   Assistente de escrita") { ForeColor = Theme.Accent, Padding = new Padding(9, 5, 7, 6) });
-        Items.Add(new ToolStripSeparator());
+        using var source = typeof(TrayMenu).Assembly.GetManifestResourceStream("AGC.Brand.Icon")!;
+        using var ico = new Icon(source, 32, 32);
+        brand = ico.ToBitmap();
+        ShowCheckMargin = false; ShowImageMargin = false; BackColor = Theme.Panel; ForeColor = Theme.Text; Font = Theme.Font(10); Padding = new Padding(6);
+        MinimumSize = new Size(LogicalToDeviceUnits(288), 0); Renderer = new RendererImpl(this); Items.Add(header); Items.Add(new ToolStripSeparator()); header.Click += (_, _) => ToggleRequested?.Invoke();
     }
-    protected override void OnItemAdded(ToolStripItemEventArgs e)
+    internal void SetStatus(bool off, long count) { Paused = off; Count = count; header.Text = off ? "AGC · Pausado" : "AGC · Ativo"; Invalidate(); }
+    internal ToolStripMenuItem Entry(string text, string glyph, Action action, string shortcut = "")
     {
-        base.OnItemAdded(e);
-        if (e.Item is ToolStripMenuItem item) item.Padding = new Padding(9, 5, 9, 5);
+        var row = new ToolStripMenuItem(text, null, (_, _) => action()) { Tag = glyph, ShortcutKeyDisplayString = shortcut };
+        Items.Add(row); return row;
     }
-    sealed class TrayRenderer : ToolStripRenderer
+    protected override void OnItemAdded(ToolStripItemEventArgs e) { base.OnItemAdded(e); if (e.Item is ToolStripMenuItem item && item != header) item.Padding = new Padding(27, 5, 7, 5); }
+    protected override void OnOpened(EventArgs e) { base.OnOpened(e); using var path = Theme.Round(new Rectangle(0, 0, Width, Height), 13); var old = Region; Region = new Region(path); old?.Dispose(); }
+    sealed class RendererImpl(TrayMenu menu) : ToolStripRenderer
     {
-        static Color PanelColor => SystemInformation.HighContrast ? SystemColors.Menu : Theme.Panel;
-        static Color ActiveColor => SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(69, 51, 97);
-        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e) => e.Graphics.Clear(PanelColor);
-        protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) { using var b = new SolidBrush(PanelColor); e.Graphics.FillRectangle(b, e.AffectedBounds); }
-        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
-        {
-            using var p = new Pen(SystemInformation.HighContrast ? SystemColors.MenuText : Theme.Border);
-            e.Graphics.DrawRectangle(p, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-        }
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e) => e.Graphics.Clear(Theme.Panel);
+        protected override void OnRenderImageMargin(ToolStripRenderEventArgs e) { }
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e) { e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; using var outline = Theme.Round(new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1), 13); using var p = new Pen(Theme.Border); e.Graphics.DrawPath(p, outline); }
         protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
         {
-            var rect = new Rectangle(Point.Empty, e.Item.Size);
-            using var b = new SolidBrush(e.Item.Selected && e.Item.Enabled ? ActiveColor : PanelColor); e.Graphics.FillRectangle(b, rect);
-            if (e.Item.Selected && e.Item.Enabled)
+            var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; var r = new Rectangle(0, 0, e.Item.Width - 1, e.Item.Height - 1);
+            if (e.Item.Selected) { using var bg = new SolidBrush(Theme.Raised); using var path = Theme.Round(r, 7); g.FillPath(bg, path); }
+            if (e.Item == menu.header)
             {
-                using var accent = new SolidBrush(SystemInformation.HighContrast ? SystemColors.HighlightText : Theme.Accent);
-                e.Graphics.FillRectangle(accent, 0, 3, 3, Math.Max(0, rect.Height - 6));
+                g.DrawImage(menu.brand, 9, 10, 24, 25);
+                using var title = Theme.Font(11, true); using var sub = Theme.Font(8);
+                TextRenderer.DrawText(g, "AGC", title, new Rectangle(41, 4, 160, 22), Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, menu.Paused ? "○  Pausado" : $"●  Ativo · {menu.Count} correções hoje", sub, new Rectangle(41, 25, r.Width - 97, 20), Theme.Muted, TextFormatFlags.EndEllipsis);
+                var toggle = new Rectangle(r.Width - 47, 15, 36, 20); using var tp = Theme.Round(toggle, 10); using var fill = new SolidBrush(menu.Paused ? Theme.Raised : Color.FromArgb(80, 69, 117)); using var pen = new Pen(menu.Paused ? Theme.Border : Theme.Accent);
+                g.FillPath(fill, tp); g.DrawPath(pen, tp); using var dot = new SolidBrush(menu.Paused ? Theme.Muted : Theme.Text); g.FillEllipse(dot, toggle.X + (menu.Paused ? 3 : 19), toggle.Y + 3, 14, 14);
+            }
+            else if (e.Item.Tag is string icon)
+            {
+                var state = g.Save(); g.TranslateTransform(8, (r.Height - 16) / 2f);
+                using var pen = new Pen(Theme.Muted, 1.25f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+                switch (icon)
+                {
+                    case "": g.DrawEllipse(pen, 1, 1, 13, 13); g.DrawLines(pen, [new Point(7, 3), new Point(7, 8), new Point(11, 8)]); break;
+                    case "": g.DrawArc(pen, 1, 1, 13, 13, 0, 255); g.DrawBezier(pen, 5, 1, 3, 9, 8, 13, 14, 8); break;
+                    case "": g.DrawEllipse(pen, 1, 1, 13, 13); g.DrawLine(pen, 3, 3, 12, 12); break;
+                    case "": g.DrawRectangle(pen, 1, 2, 14, 12); g.DrawLine(pen, 1, 5, 15, 5); break;
+                    case "": g.DrawArc(pen, 2, 2, 12, 12, -55, 290); g.DrawLine(pen, 8, 0, 8, 7); break;
+                    case "": g.DrawLines(pen, [new Point(2, 13), new Point(10, 5), new Point(12, 7), new Point(4, 15), new Point(2, 13)]); g.DrawLine(pen, 3, 1, 3, 5); g.DrawLine(pen, 1, 3, 5, 3); g.DrawLine(pen, 11, 1, 14, 1); break;
+                    default: g.DrawRectangle(pen, 2, 2, 9, 10); g.DrawLines(pen, [new Point(12, 5), new Point(14, 5), new Point(14, 14), new Point(5, 14)]); break;
+                }
+                g.Restore(state);
             }
         }
         protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
         {
-            e.TextColor = SystemInformation.HighContrast ?
-                (e.Item.Selected ? SystemColors.HighlightText : SystemColors.MenuText) :
-                e.Item is ToolStripLabel ? Theme.Accent : e.Item.Enabled ? Theme.Text : Theme.Muted;
-            base.OnRenderItemText(e);
+            if (e.Item == menu.header) return;
+            bool shortcut = e.Item is ToolStripMenuItem row && !string.IsNullOrEmpty(row.ShortcutKeyDisplayString) && e.Text == row.ShortcutKeyDisplayString;
+            int left = menu.LogicalToDeviceUnits(32); var r = new Rectangle(left, 0, e.Item.Width - left - menu.LogicalToDeviceUnits(9), e.Item.Height);
+            TextRenderer.DrawText(e.Graphics, e.Text, e.TextFont, r, shortcut || !e.Item.Enabled ? Theme.Muted : Theme.Text,
+                TextFormatFlags.SingleLine | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | (shortcut ? TextFormatFlags.Right : TextFormatFlags.Left));
         }
-        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
-        {
-            using var p = new Pen(SystemInformation.HighContrast ? SystemColors.MenuText : Theme.Border);
-            e.Graphics.DrawLine(p, 5, e.Item.Height / 2, e.Item.Width - 5, e.Item.Height / 2);
-        }
+        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e) { using var p = new Pen(Theme.Border); e.Graphics.DrawLine(p, 7, e.Item.Height / 2, e.Item.Width - 7, e.Item.Height / 2); }
     }
+    protected override void Dispose(bool disposing) { if (disposing) brand.Dispose(); base.Dispose(disposing); }
 }

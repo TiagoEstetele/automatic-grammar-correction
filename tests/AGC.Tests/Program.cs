@@ -19,6 +19,12 @@ internal static class Program
         if (args.Contains("--desktop-paste")) return DesktopPaste.Run(engine);
         var r = new RuleSettings();
         Check("início preguiçoso", false, engine.DictionaryLoaded);
+        var diff = TextDiff.Compare("Eles tem tempo hoje.", "Eles têm tempo hoje.");
+        Check("prévia destaca apenas tem → têm", 1, diff.Count(s => s.Changed));
+        Check("motivo da revisão", "concordância com sujeito plural", TextDiff.Explain(diff.Single(s => s.Changed)));
+        Check("destaques preservam a frase completa", "Eles têm tempo hoje.", string.Concat(diff.Select(s => s.After)));
+        var yesterday = new Preferences { StatsDay = "2000-01-01", CheckedWords = 13, Corrections = 4, ElapsedMs = 40 };
+        yesterday.Today(); Check("contadores viram no dia local", (0L, 0L, 0d), (yesterday.CheckedWords, yesterday.Corrections, yesterday.ElapsedMs));
         Corrector.WordChange? Word(string s) => engine.CompletedWord(s, s.Length, r);
         Check("resposta no primeiro espaço", "Você", Word("voce ")?.After);
         Check("acentos frequentes sem carregar Hunspell", false, engine.DictionaryLoaded);
@@ -35,8 +41,8 @@ internal static class Program
         Check("vírgula automática no cursor", "no entanto, ", Tail("no entanto "));
         Check("conector adicional", "além disso, ", Tail("além disso "));
         Check("remove espaço antes do sinal", "eu voltei!", Tail("eu voltei !"));
-        Check("espaço automático depois de vírgula","eu voltei, ",Tail("eu voltei,"));
-        Check("não acrescenta espaço à vírgula decimal",null,Tail("eu paguei 1,"));
+        Check("espaço automático depois de vírgula", "eu voltei, ", Tail("eu voltei,"));
+        Check("não acrescenta espaço à vírgula decimal", null, Tail("eu paguei 1,"));
         Check("não repete vírgula", null, Tail("no entanto, "));
         Check("não muda letras automaticamente na UIA", null, Tail("eu vi voce "));
         Check("decimal permanece", null, Tail("eu paguei 1,50 "));
@@ -98,23 +104,18 @@ internal static class Program
         session.End(5);
         Check("reentrada pergunta novamente", true, session.First(5, 20));
         Check("sem permissão herdada", false, session.Allowed(5, 20));
-        if (args.Contains("--windows")) WindowsCases(engine);
+        if (args.Contains("--windows")) { WindowsCases(engine); PanelCases(engine); }
         if (Array.IndexOf(args, "--preview") is int index && index >= 0 && index + 1 < args.Length)
         {
             using var settings = new SettingsWindow(new Preferences(), () => { });
-            settings.ShowInTaskbar = false;
-            settings.StartPosition = FormStartPosition.Manual;
-            settings.Location = new Point(-30000, -30000);
-            settings.Show();
-            Application.DoEvents();
-            using var frame = new Bitmap(settings.Width, settings.Height);
-            settings.DrawToBitmap(frame, new Rectangle(Point.Empty, frame.Size));
-            frame.Save(args[index + 1], System.Drawing.Imaging.ImageFormat.Png);
-            settings.Navigate("Digitação"); Application.DoEvents();
-            settings.DrawToBitmap(frame, new Rectangle(Point.Empty, frame.Size));
-            frame.Save(Path.ChangeExtension(args[index + 1], ".rules.png"), System.Drawing.Imaging.ImageFormat.Png);
+            settings.ShowInTaskbar = false; settings.WindowStartupLocation = System.Windows.WindowStartupLocation.Manual;
+            settings.Left = -30000; settings.Top = -30000; settings.Show();
+            // Allow the real asynchronous preview to finish before recording the window.
+            for (int n = 0; n < 30; n++) { Application.DoEvents(); Thread.Sleep(20); }
+            settings.SavePreview(args[index + 1]); settings.Navigate("Digitação"); for (int n = 0; n < 12; n++) { Application.DoEvents(); Thread.Sleep(20); }
+            settings.SavePreview(Path.ChangeExtension(args[index + 1], ".rules.png"));
             using var popup = new ReviewPopup();
-            popup.Present(new(0, 0, "demo", "eles tem tempo hoje", new Rectangle(0, 0, 120, 20)));
+            popup.Present(new(0, 0, "demo", "Eles tem tempo hoje.", new Rectangle(0, 0, 120, 20)));
             popup.Location = new Point(-30000, -30000);
             popup.ShowResult("Eles têm tempo hoje.", true);
             popup.Location = new Point(-30000, -30000);
@@ -122,10 +123,11 @@ internal static class Program
             popup.DrawToBitmap(panel, new Rectangle(Point.Empty, panel.Size));
             panel.Save(Path.ChangeExtension(args[index + 1], ".popup.png"), System.Drawing.Imaging.ImageFormat.Png);
             using var menu = new TrayMenu();
-            menu.Items.Add(new ToolStripMenuItem("Melhorar texto") { ShortcutKeyDisplayString = "Ctrl+Shift+G" });
-            menu.Items.Add("Melhorar texto copiado");
-            var hover = menu.Items.Add("Configurações"); menu.Items.Add("Retomar correção automática");
-            menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("Sair");
+            menu.SetStatus(false, 0);
+            menu.Entry("Pausar por 15 minutos", "", () => { }); menu.Entry("Pausar até amanhã", "", () => { });
+            menu.Items.Add(new ToolStripSeparator()); menu.Entry("Corrigir seleção", "", () => { }, "Ctrl Shift G");
+            menu.Entry("Corrigir texto copiado", "", () => { }); menu.Entry("Ignorar neste aplicativo", "", () => { });
+            var hover = menu.Entry("Abrir painel", "", () => { }); menu.Items.Add(new ToolStripSeparator()); menu.Entry("Sair do AGC", "", () => { });
             menu.Show(new Point(-30000, -30000)); hover.Select(); Application.DoEvents();
             using var trayImage = new Bitmap(menu.Width, menu.Height);
             menu.DrawToBitmap(trayImage, new Rectangle(Point.Empty, trayImage.Size));
@@ -134,6 +136,36 @@ internal static class Program
         }
         Console.WriteLine($"{count - failed}/{count} verificações aprovadas.");
         return failed == 0 ? 0 : 1;
+    }
+    static IEnumerable<T> Descendants<T>(System.Windows.DependencyObject root) where T : System.Windows.DependencyObject
+    {
+        for (int i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i); if (child is T t) yield return t;
+            foreach (var found in Descendants<T>(child)) yield return found;
+        }
+    }
+    static void PanelCases(Corrector engine)
+    {
+        var prefs = new Preferences(); int saves = 0;
+        using var window = new SettingsWindow(prefs, () => saves++, corrector: engine)
+        {
+            ShowActivated = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = System.Windows.WindowStartupLocation.Manual,
+            Left = -30000,
+            Top = -30000
+        };
+        window.Show(); window.Navigate("Digitação"); window.UpdateLayout();
+        var accents = Descendants<System.Windows.Controls.CheckBox>(window).Single(c => System.Windows.Automation.AutomationProperties.GetName(c) == "Acentuação");
+        accents.IsChecked = false; Check("regra editada pelo painel", false, prefs.Rules.Accents);
+        var delay = Descendants<System.Windows.Controls.Button>(window).Single(b => Equals(b.Content, "300 ms"));
+        delay.RaiseEvent(new System.Windows.RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+        Check("intervalo escolhido no painel", "300", prefs.Timing);
+        Check("preferências notificam persistência", true, saves >= 2);
+        window.Navigate("Aplicativos"); window.UpdateLayout();
+        var search = Descendants<System.Windows.Controls.TextBox>(window).Single(); search.Text = "agc-fixture-unlisted.exe";
+        window.UpdateLayout(); Check("busca sem resultado", true, Descendants<System.Windows.Controls.TextBlock>(window).Any(x => x.Text == "Nenhum aplicativo encontrado"));
     }
     static void WindowsCases(Corrector engine)
     {
