@@ -12,6 +12,9 @@ jobs:
           dotnet-version: '10.0.x'
       - run: dotnet restore tests/AGC.Tests --locked-mode
       - run: dotnet run --project tests/AGC.Tests -c Release --no-restore -- --windows
+      - name: Verificar colagem e pontuação em um editor real
+        run: dotnet run --project tests/AGC.Tests -c Release --no-build -- --desktop-paste
+        timeout-minutes: 2
       - run: ./tools/package.ps1
         shell: pwsh
       - uses: actions/upload-artifact@v4
@@ -41,7 +44,7 @@ jobs:
           $notes = @(
             'Extraia o ZIP completo e execute AutomaticGrammarCorrection.exe. O pacote para Windows x64 inclui o runtime, o dicionário pt-BR e as licenças.'
             ''
-            'A revisão por palavra começa no espaço ou na pontuação. Selecione um trecho para abrir o pop-up de ortografia, gramática e pontuação. No Codex, o AGC mostra sugestões e preserva o rascunho. O novo painel abre com dois cliques no ícone da bandeja.'
+            'Selecione texto e pressione F8 no pop-up para revisar e aplicar. A pontuação junto ao cursor é automática nos campos editáveis compatíveis. Um duplo clique no executável ou no ícone da bandeja abre as configurações da instância ativa.'
             ''
             "SHA-256 do ZIP: $hash"
           )

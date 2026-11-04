@@ -37,7 +37,7 @@ internal static class Editor
         if (Snapshot(focus) is not { } s || s.start == s.end || !Msg(focus, 0xD6, s.start, 0, out var pos) || pos == -1) return null;
         var point = new Point((short)((long)pos & 65535), (short)((long)pos >> 16));
         if (!Native.ClientToScreen(focus, ref point)) return null;
-        return new(window, focus, s.start + ":" + s.end, s.text[s.start..s.end], new Rectangle(point, new Size(1, 20)));
+        return new(window, focus, s.start + ":" + s.end, s.text[s.start..s.end], new Rectangle(point, new Size(1, 20)),Writable:(Native.Style(focus)&0x800)==0);
     }
 
     static bool Msg(nint h, uint code, nint w, nint l, out nint v) => Native.Message(h, code, w, l, 2, 150, out v) != 0;

@@ -3,17 +3,18 @@ using System.Windows.Automation.Text;
 
 namespace Agc;
 
-internal sealed record ReviewTarget(nint Window, nint Focus, string Identity, string Original, Rectangle Anchor, string? WordResult = null);
+internal sealed record ReviewTarget(nint Window, nint Focus, string Identity, string Original, Rectangle Anchor, string? WordResult = null, bool Writable=true);
+internal sealed record LiveRange(AutomationElement Element,TextPattern Pattern,TextPatternRange Selection,TextPatternRange Target);
 
 internal static class ReviewProbe
 {
     // Métodos UIA são somente leitura. O popup não seleciona o trecho no editor.
-    internal static ReviewTarget? Read(nint h, Corrector engine, RuleSettings rules, bool word, Func<bool> valid)
+    internal static ReviewTarget? Read(nint h, Corrector engine, RuleSettings rules, bool word, Func<bool> valid, bool punctuationOnly=false, Action<ReviewTarget,LiveRange>? onValidated=null)
     {
         if (!valid() || Native.GetForegroundWindow() != h) return null;
         nint focus = Native.Focus(h);
         if (focus == 0 || Native.GetAncestor(focus, 2) != h) return null;
-        if (!word && Editor.IsPlain(focus) && Editor.SelectedTarget(h, focus) is { } native)
+        if (!word && onValidated==null && Editor.IsPlain(focus) && Editor.SelectedTarget(h, focus) is { } native)
             return valid() ? native : null;
         var el = AutomationElement.FocusedElement;
         if (el == null || el.Current.IsPassword || !el.Current.IsEnabled ||
@@ -26,13 +27,14 @@ internal static class ReviewProbe
         var range = selection.Clone();
         string original;
         string? result = null;
+        var attr=range.GetAttributeValue(TextPattern.IsReadOnlyAttribute);
+        bool writable=Equals(attr,false) || (!Equals(attr,true) && el.TryGetCurrentPattern(ValuePattern.Pattern,out var v) && !((ValuePattern)v).Current.IsReadOnly);
         if (word)
         {
-            var readOnly = selection.GetAttributeValue(TextPattern.IsReadOnlyAttribute);
-            if (Equals(readOnly, true) || el.Current.ControlType == ControlType.Document && !Equals(readOnly, false)) return null;
+            if(!writable) return null;
             int moved = range.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -256);
             var before = range.GetText(1025);
-            var change = engine.CompletedWord(before, before.Length, rules, moved != -256);
+            var change = punctuationOnly ? engine.TrailingPunctuation(before,rules,moved!=-256) : engine.CompletedWord(before, before.Length, rules, moved != -256);
             if (change is not { } w || before.Length > 1024) return null;
             range = selection.Clone();
             range.MoveEndpointByUnit(TextPatternRangeEndpoint.Start, TextUnit.Character, -(before.Length - w.Start));
@@ -40,13 +42,15 @@ internal static class ReviewProbe
             original = w.Before; result = w.After;
         }
         else original = range.GetText(100001);
-        if (string.IsNullOrWhiteSpace(original) || original.Length > 100000 || !valid()) return null;
+        if ((!punctuationOnly && string.IsNullOrWhiteSpace(original)) || original.Length > 100000 || !valid()) return null;
         var rect = range.GetBoundingRectangles().FirstOrDefault(r => !r.IsEmpty && r.Width > 0 && r.Height > 0);
         if (rect.Width <= 0 || rect.Height <= 0 || !double.IsFinite(rect.Left) || !double.IsFinite(rect.Top)) return null;
         if (range.GetText(100001) != original || !valid() || Native.GetForegroundWindow() != h ||
             !el.Equals(AutomationElement.FocusedElement) || tp.GetSelection() is not [var now] || !now.Compare(selection)) return null;
-        return new(h, focus, string.Join(".", el.GetRuntimeId()), original,
-            new Rectangle((int)rect.Left, (int)rect.Top, (int)Math.Ceiling(rect.Width), (int)Math.Ceiling(rect.Height)), result);
+        var target=new ReviewTarget(h, focus, string.Join(".", el.GetRuntimeId()), original,
+            new Rectangle((int)rect.Left, (int)rect.Top, (int)Math.Ceiling(rect.Width), (int)Math.Ceiling(rect.Height)), result,writable);
+        onValidated?.Invoke(target,new(el,tp,selection.Clone(),range.Clone()));
+        return target;
     }
 }
 
@@ -75,8 +79,14 @@ internal sealed class ReviewPopup : Form
     internal event Action<ReviewKind>? Chosen;
     internal event Action? CopyRequested;
     internal event Action? ApplyRequested;
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    internal Func<bool,bool>? BindAction { get; set; }
+    bool hasActionKey;
+    void ApplyButton(string label)=>Button(label+(hasActionKey?"   F8":""),()=>ApplyRequested?.Invoke());
     internal ReviewTarget? Target { get; private set; }
     internal string? Result { get; private set; }
+    internal ReviewKind ActiveKind {get;private set;}
+    void Pick(ReviewKind kind){ActiveKind=kind;Result=null;Chosen?.Invoke(kind);}
     protected override bool ShowWithoutActivation => true;
     protected override CreateParams CreateParams
     {
@@ -111,19 +121,22 @@ internal sealed class ReviewPopup : Form
     internal void Present(ReviewTarget target)
     {
         if (Visible && Target == target) return;
-        Target = target; Result = null; ClearButtons();
+        Target = target; Result = null; ActiveKind=ReviewKind.All; ClearButtons();
+        hasActionKey=BindAction?.Invoke(target.Writable)==true;
         heading.Text = target.WordResult == null ? "AGC  ·  Melhorar seleção" : "AGC  ·  Sugestão de palavra";
         if (target.WordResult == null)
         {
             preview.Text = target.Original; preview.AccessibleDescription = target.Original;
-            Button("Ortografia", () => Chosen?.Invoke(ReviewKind.Spelling));
-            Button("Gramática", () => Chosen?.Invoke(ReviewKind.Grammar));
-            Button("Pontuação", () => Chosen?.Invoke(ReviewKind.Punctuation));
-            Button("Tudo", () => Chosen?.Invoke(ReviewKind.All));
+            if(target.Writable) ApplyButton("Revisar e aplicar");
+            Button("Ortografia", () => Pick(ReviewKind.Spelling));
+            Button("Gramática", () => Pick(ReviewKind.Grammar));
+            Button("Pontuação", () => Pick(ReviewKind.Punctuation));
+            Button("Tudo", () => Pick(ReviewKind.All));
         }
         else
         {
             Result = target.WordResult; preview.Text = target.Original.Trim() + "  →  " + Result.Trim();
+            if(target.Writable) ApplyButton("Aplicar");
             Button("Copiar correção", () => CopyRequested?.Invoke());
         }
         Button("×", Dismiss); LayoutAt(target.Anchor);
@@ -133,7 +146,7 @@ internal sealed class ReviewPopup : Form
         if (Target == null) return;
         Result = s; ClearButtons(); heading.Text = s == Target.Original ? "Nenhuma alteração" : "Prévia da revisão";
         preview.Text = s; preview.AccessibleDescription = s;
-        if (inline && s != Target.Original) Button("Aplicar", () => ApplyRequested?.Invoke());
+        if (inline && s != Target.Original) ApplyButton("Aplicar");
         Button("Copiar resultado", () => CopyRequested?.Invoke()); Button("×", Dismiss); LayoutAt(Target.Anchor);
     }
     internal static Point Place(Rectangle anchor, Size size, Rectangle work)
@@ -157,5 +170,5 @@ internal sealed class ReviewPopup : Form
         Location = Place(anchor, Size, work);
         if (!Visible) Show();
     }
-    internal void Dismiss() { Hide(); Target = null; Result = null; preview.Text = ""; preview.AccessibleDescription = null; }
+    internal void Dismiss() { if(Target!=null)BindAction?.Invoke(false); Hide(); Target = null; Result = null; preview.Text = ""; preview.AccessibleDescription = null; }
 }

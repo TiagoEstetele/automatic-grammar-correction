@@ -34,23 +34,14 @@ internal sealed class Tray : ApplicationContext
     {
         prefs = Preferences.Load(out var recovered);
         _ = dispatcher.Handle;
-        var menu = new ContextMenuStrip
-        {
-            BackColor = Theme.Panel,
-            ForeColor = Theme.Text,
-            ShowImageMargin = false,
-            ShowCheckMargin = true,
-            Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors()),
-            Font = Theme.Font(10),
-            Padding = new Padding(5)
-        };
+        var menu = new TrayMenu();
         signals = new();
         icon = new NotifyIcon { Icon = new Icon(Path.Combine(AppContext.BaseDirectory, "tray.ico")), Text = "automatic grammar correction", ContextMenuStrip = menu, Visible = true };
-        menu.Items.Add("Melhorar texto   Ctrl+Shift+G", null, async (_, _) => await Manual(true));
+        menu.Items.Add(new ToolStripMenuItem("Melhorar texto",null,async (_,_)=>await Manual(true)){ShortcutKeyDisplayString="Ctrl+Shift+G"});
         menu.Items.Add("Melhorar texto copiado", null, async (_, _) => await Manual(true, clipboardOnly: true));
         menu.Items.Add("Configurações", null, (_, _) => OpenSettings());
         var pause = new ToolStripMenuItem("Pausar correção automática") { CheckOnClick = true };
-        pause.CheckedChanged += (_, _) => { paused = pause.Checked; InvalidateWork(); };
+        pause.CheckedChanged += (_, _) => { paused = pause.Checked; pause.Text=paused?"Retomar correção automática":"Pausar correção automática"; InvalidateWork(); };
         menu.Items.Add(pause);
         sessionItem.Click += (_, _) => SessionChoice();
         menu.Items.Add(sessionItem);
@@ -61,7 +52,7 @@ internal sealed class Tray : ApplicationContext
         };
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Sair", null, (_, _) => ExitThread());
-        icon.DoubleClick += (_, _) => OpenSettings();
+        icon.MouseDoubleClick += (_, e) => { if(e.Button==MouseButtons.Left) OpenSettings(); };
         icon.BalloonTipClicked += (_, _) => { if (prompted != 0) SessionChoice(); };
         signals.InputChanged += () =>
         {
@@ -87,6 +78,8 @@ internal sealed class Tray : ApplicationContext
         popup.Chosen += async k => await Preview(k);
         popup.CopyRequested += async () => await CopyPreview();
         popup.ApplyRequested += async () => await ApplyPreview();
+        popup.BindAction=signals.CaptureApply;
+        signals.ApplyPressed+=async ()=>await ApplyPreview();
         signals.Boundary += () =>
         {
             if (!paused)
@@ -161,7 +154,12 @@ internal sealed class Tray : ApplicationContext
             busy = true; automaticInFlight = true;
             try
             {
-                if (await Probe(h, true) is { } word && Eligible(h, true) && Native.GetForegroundWindow() == h) popup.Present(word);
+                int stamp=Volatile.Read(ref generation);
+                bool allowed=sessions.Allowed(h,lastPid);
+                bool safe()=>!closed && Volatile.Read(ref generation)==stamp && Native.GetForegroundWindow()==h &&
+                    Native.Focus(h)==boundaryFocus && (allowed || !Fullscreen.IsFull(h));
+                var punctuation=await EditRange(h,null,null,true,safe);
+                if (punctuation==RangeOutcome.Cancelled && safe() && await Probe(h, true) is { } word && Eligible(h, true) && Native.GetForegroundWindow() == h) popup.Present(word);
             }
             finally { busy = false; automaticInFlight = false; if (!closed && pendingBoundary) debounce.Start(); }
         }
@@ -198,27 +196,53 @@ internal sealed class Tray : ApplicationContext
         try
         {
             var result = await Task.Run(() => engine.Correct(target.Original, rules, true));
-            if (popup.Target == target && await Probe(target.Window, false) == target && popup.Target == target)
-                popup.ShowResult(result, SupportsInline(target.Focus));
+            if (popup.Target == target && await Probe(target.Window, false) == target && popup.Target == target && popup.ActiveKind==kind)
+                popup.ShowResult(result, target.Writable);
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or System.Text.RegularExpressions.RegexMatchTimeoutException) { popup.Dismiss(); Notify("Revisão indisponível", "Tente novamente pela bandeja."); }
     }
-    bool SupportsInline(nint focus) => Editor.IsPlain(focus) &&
-        !string.Equals(Path.GetFileNameWithoutExtension(lastPath), "Codex", StringComparison.OrdinalIgnoreCase);
+    async Task<RangeOutcome> EditRange(nint h,ReviewTarget? expected,string? result,bool automatic,Func<bool> valid){
+        try {
+            return await Task.Run(()=>{
+                var outcome=RangeOutcome.Cancelled;
+                ReviewProbe.Read(h,engine,prefs.Rules,automatic || expected?.WordResult!=null,valid,automatic,(target,live)=>{
+                    if(!automatic && (expected!=target || result==null)) return;
+                    outcome=RangeEdit.Apply(target,live,automatic?target.WordResult!:result!,automatic,valid);
+                });
+                return outcome;
+            });
+        } catch(Exception ex) when(ex is ElementNotAvailableException or InvalidOperationException or COMException or IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or System.Text.RegularExpressions.RegexMatchTimeoutException) {return RangeOutcome.Cancelled;}
+    }
     async Task ApplyPreview()
     {
         var target = popup.Target; var result = popup.Result;
-        if (busy || target == null || result == null || !Eligible(target.Window, true) || !SupportsInline(target.Focus)) return;
+        if (busy || target == null || !target.Writable || Native.GetForegroundWindow()!=target.Window || !Eligible(target.Window,true)) return;
         int stamp = Volatile.Read(ref generation);
-        bool Valid() => !closed && Volatile.Read(ref generation) == stamp && Native.GetForegroundWindow() == target.Window && Native.Focus(target.Window) == target.Focus;
+        bool allowed=sessions.Allowed(target.Window,lastPid);
+        bool Valid() => !closed && Volatile.Read(ref generation) == stamp && Native.GetForegroundWindow() == target.Window && Native.Focus(target.Window) == target.Focus && (allowed || !Fullscreen.IsFull(target.Window));
         busy = true;
         try
         {
-            var edit = await Task.Run(() => Editor.Plain(target.Focus, true, engine, prefs.Rules, Valid, target, result));
-            if (edit.State == Outcome.CopyResult) Notify("Campo com limite", "Use Copiar resultado para preservar o texto inteiro.");
-            else popup.Dismiss();
+            var kind=popup.ActiveKind;
+            uint sequence=Native.GetClipboardSequenceNumber();
+            result??=await Task.Run(()=>engine.Correct(target.Original,ReviewOptions.Filter(prefs.Rules,kind),true));
+            if(!Valid() || popup.Target!=target || popup.ActiveKind!=kind || await Probe(target.Window,target.WordResult!=null)!=target || !Valid())return;
+            if(result==target.Original){popup.ShowResult(result);return;}
+            if(Editor.IsPlain(target.Focus) && target.WordResult==null){
+                var edit=await Task.Run(()=>Editor.Plain(target.Focus,true,engine,prefs.Rules,Valid,target,result));
+                if(edit.State==Outcome.CopyResult)Notify("Campo com limite","A revisão não cabe neste campo.");
+                else popup.Dismiss();
+                return;
+            }
+            if(sequence!=Native.GetClipboardSequenceNumber() || Native.ModifiersDown())return;
+            Clipboard.SetText(result); // Uma colagem substitui a seleção. Nunca excluir o texto antes.
+            uint owned=Native.GetClipboardSequenceNumber();
+            var outcome=await EditRange(target.Window,target,result,false,()=>Valid() && owned==Native.GetClipboardSequenceNumber());
+            popup.Dismiss();
+            if(outcome!=RangeOutcome.Confirmed)Notify("Revisão na área de transferência",outcome==RangeOutcome.Sent?"A colagem foi enviada, mas o editor não confirmou o resultado.":"A seleção mudou ou o editor não aceitou a colagem.");
         }
-        finally { busy = false; }
+        catch(Exception ex) when(ex is ExternalException or IOException or InvalidOperationException or System.Text.RegularExpressions.RegexMatchTimeoutException) {Notify("Não foi possível aplicar","A revisão foi interrompida. Confira a seleção e tente novamente.");}
+        finally { busy = false; if(!closed && pendingBoundary)debounce.Start(); }
     }
     async Task CopyPreview()
     {
@@ -265,6 +289,12 @@ internal sealed class Tray : ApplicationContext
             if (!menu) return;
             h = 0; // Um menu sem editor recuperável ainda pode melhorar o texto copiado.
         }
+        if(h!=0 && await Probe(h,false) is {} selection && selection.Writable) {
+            selectionTimer.Stop();
+            popup.Present(selection);
+            await ApplyPreview();
+            return;
+        }
         var result = h == 0 ? new EditResult(Outcome.NoSelection) : await Edit(h, true);
         if (closed) return;
         try
@@ -292,9 +322,17 @@ internal sealed class Tray : ApplicationContext
             Notify("Não foi possível melhorar o texto", "Verifique o dicionário e tente novamente com a área de transferência disponível.");
         }
     }
+    internal void RequestSettings(){
+        try { if(!closed) dispatcher.BeginInvoke((Action)OpenSettings); }
+        catch(InvalidOperationException) when(closed || dispatcher.IsDisposed) {}
+    }
     void OpenSettings()
     {
-        if (settings is { IsDisposed: false }) { settings.Activate(); return; }
+        if(closed) return;
+        if (settings is { IsDisposed: false }) {
+            if(settings.WindowState==FormWindowState.Minimized) settings.WindowState=FormWindowState.Normal;
+            settings.Show(); settings.BringToFront(); settings.Activate(); SetForegroundWindow(settings.Handle); return;
+        }
         settings = new SettingsWindow(prefs, () => { InvalidateWork(); Save(); }, () => paused, b =>
         {
             if (icon.ContextMenuStrip?.Items.OfType<ToolStripMenuItem>().FirstOrDefault(item => item.CheckOnClick) is { } toggle) toggle.Checked = b;

@@ -9,6 +9,13 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
     readonly List<nint> hooks = new();
     internal event Action? Boundary, InputChanged, CursorMoved, HotkeyPressed;
     internal event Action? SelectionGesture;
+    internal event Action? ApplyPressed;
+    bool captureAction;
+    internal bool CaptureApply(bool active) {
+        if(active && !captureAction) captureAction=Native.RegisterHotKey(Handle,2,0x4000,0x77); // F8
+        if(!active && captureAction){Native.UnregisterHotKey(Handle,2); captureAction=false;}
+        return captureAction;
+    }
     internal event Action<nint, uint>? WindowEvent;
     internal bool ShortcutReady { get; }
     internal SignalWindow()
@@ -34,7 +41,8 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
     }
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == Native.Hotkey) HotkeyPressed?.Invoke();
+        if (m.Msg == Native.Hotkey && m.WParam==1) HotkeyPressed?.Invoke();
+        if (m.Msg == Native.Hotkey && m.WParam==2 && captureAction) ApplyPressed?.Invoke();
         if (m.Msg == Native.Input)
         {
             uint size = (uint)Marshal.SizeOf<Native.RawPacket>();
@@ -47,6 +55,7 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
                 SelectionGesture?.Invoke();
             if (packet.Header.Type == 1 && packet.Header.Device != 0 && key.Message is 0x100 or 0x104)
             {
+                if(captureAction && key.Vk==0x77){base.WndProc(ref m);return;}
                 if (key.Vk is >= 0x21 and <= 0x28 or 0x09 or 0x1B or 0x11 or 0x12) CursorMoved?.Invoke();
                 else InputChanged?.Invoke();
                 if (key.Vk is 0x20 or 0x0D or 0xBA or 0xBC or 0xBE or 0xBF or 0x31 || key.Vk == 0x6E) Boundary?.Invoke();
@@ -59,6 +68,7 @@ internal sealed class SignalWindow : NativeWindow, IDisposable
         foreach (var h in hooks) Native.UnhookWinEvent(h);
         if (Handle != 0)
         {
+            CaptureApply(false);
             Native.UnregisterHotKey(Handle, 1);
             Native.RegisterRawInputDevices([new Native.Device { Page = 1, Usage = 6, Flags = 1 }, new Native.Device { Page = 1, Usage = 2, Flags = 1 }], 2, (uint)Marshal.SizeOf<Native.Device>());
             DestroyHandle();

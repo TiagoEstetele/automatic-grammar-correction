@@ -54,6 +54,10 @@ public sealed class Corrector
     static readonly Regex NosVai = Rx(@"(?i)\b(nós) (vai)\b");
     static readonly Regex GenteVamos = Rx(@"(?i)\b(a gente) (vamos)\b");
     static readonly Regex LastWord = Rx(@"[ \t,;:.!?]*(?<word>[\p{L}\p{M}]+)[ \t,;:.!?]*\z");
+    // Conectores no início de uma oração. Não inferir pausas entre sujeito e verbo.
+    static readonly Regex Intro = Rx(@"(?i)(^|[.!?][ \t]+)([ \t]*(?:no entanto|além disso|por outro lado|ou seja|isto é))[ \t]+(?=\p{L}|$)");
+    static readonly Regex IsIntro = Rx(@"(?i)^\s*(?:no entanto|além disso|por outro lado|ou seja|isto é)\b");
+    static readonly Regex Question = Rx(@"(?i)^\s*(?:por que|como faço para|onde (?:fica|posso)|quando (?:posso|será)|qual (?:é|seria)|você (?:pode|poderia|consegue))\b");
     static readonly Dictionary<string, string> FrequentTypos = new(StringComparer.OrdinalIgnoreCase)
     {
         ["excessão"] = "exceção",
@@ -67,6 +71,23 @@ public sealed class Corrector
         ["menas"] = "menos"
     };
     public readonly record struct WordChange(int Start, int End, string Before, string After);
+    internal static bool OnlySeparators(string text) => text.All(c => " ,;:.!?".Contains(c));
+    // Em um editor acessível, só a pontuação/espaços imediatamente anteriores ao
+    // cursor podem ser substituídos sem ação do usuário. Nunca selecionar letras.
+    internal WordChange? TrailingPunctuation(string prefix, RuleSettings rules, bool beginsLine=true)
+    {
+        int start=prefix.LastIndexOfAny(['\r','\n'])+1;
+        string line=prefix[start..];
+        if(line.Length==0 || line.Length>256 || !OnlySeparators(line[^1..]) || !rules.Spacing && !rules.Commas) return null;
+        var only=ReviewOptions.Filter(rules, ReviewKind.Punctuation);
+        only.Capitals=false; only.FinalStop=false;
+        var after=Correct(line,only,false,startsAtBoundary:beginsLine || start>0);
+        if(line==after) return null;
+        int common=0;while(common<line.Length && common<after.Length && line[common]==after[common]) common++;
+        string before=line[common..], replacement=after[common..];
+        if(before.Length>8 || replacement.Length is 0 or >8 || !OnlySeparators(before) || !OnlySeparators(replacement)) return null;
+        return new(start+common,prefix.Length,before,replacement);
+    }
 
     // O contexto determina idioma/concordância, mas a edição só abrange a última
     // palavra concluída e sua pontuação. Nunca reescreva o começo do parágrafo.
@@ -155,7 +176,7 @@ public sealed class Corrector
             line = Protected.Replace(line, m => { protectedTokens.Add(m.Value); return "\uE000" + (protectedTokens.Count - 1) + "\uE001"; });
             var words = Words.Matches(line).Select(m => m.Value).ToArray();
             // Evidência lexical, nunca o layout do teclado. Trechos ambíguos ficam intactos.
-            int markers = words.Count(Markers.Contains);
+            int markers = words.Count(Markers.Contains) + (IsIntro.IsMatch(line) || Question.IsMatch(line) ? 1 : 0);
             if (!manual && markers == 1 && words.Length == 1 && words[0].ToLowerInvariant() is "do" or "da" or "nos" or "que" or "para" or "ola" or "com") continue;
             if (words.Length == 0 || (markers == 0 && (!manual || words.Length < 2))) continue;
             var lexicon = dictionary.Value;
@@ -180,7 +201,10 @@ public sealed class Corrector
                 line = NosVai.Replace(line, m => m.Groups[1].Value + " " + MatchCase(m.Groups[2].Value, "vamos"));
                 line = GenteVamos.Replace(line, m => m.Groups[1].Value + " " + MatchCase(m.Groups[2].Value, "vai"));
             }
-            if (rules.Commas) line = Lightproof.Commas(line);
+            if (rules.Commas) {
+                line = Lightproof.Commas(line);
+                line = Intro.Replace(line,m=>m.Index==0 && i==0 && !startsAtBoundary ? m.Value : m.Groups[1].Value+m.Groups[2].Value+", ");
+            }
             if (rules.Spacing)
             {
                 line = RepeatedSpaces.Replace(line, " ");
@@ -195,7 +219,7 @@ public sealed class Corrector
             });
             // Só ao concluir um parágrafo ou por solicitação. Uma pausa ao digitar não encerra a frase.
             if (rules.FinalStop && (manual || paragraphComplete || i + 2 < parts.Length) && words.Length >= 2 && EligibleEnd.IsMatch(line))
-                line = line.TrimEnd(' ', '\t') + "." + line[line.TrimEnd(' ', '\t').Length..];
+                line = line.TrimEnd(' ', '\t') + (Question.IsMatch(line) ? "?" : ".") + line[line.TrimEnd(' ', '\t').Length..];
             parts[i] = Regex.Replace(line, "\uE000([0-9]+)\uE001", m => protectedTokens[int.Parse(m.Groups[1].Value)]);
         }
         return string.Concat(parts);
