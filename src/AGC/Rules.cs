@@ -1,0 +1,119 @@
+using System.Text.RegularExpressions;
+using WeCantSpell.Hunspell;
+using System.IO;
+
+namespace Agc;
+
+public sealed class RuleSettings
+{
+    public bool Spacing { get; set; } = true;
+    public bool Capitals { get; set; } = true;
+    public bool Accents { get; set; } = true;
+    public bool Grammar { get; set; } = true;
+    public bool Commas { get; set; } = true;
+    public bool FinalStop { get; set; } = true;
+    public bool Spelling { get; set; } // Sugestões aproximadas podem trocar nomes legítimos.
+}
+
+public sealed class Corrector
+{
+    readonly Lazy<WordList> dictionary;
+    public bool DictionaryLoaded => dictionary.IsValueCreated;
+    public Corrector(string path) => dictionary = new(() => WordList.CreateFromFiles(path));
+    static readonly Regex Words = Rx(@"[\p{L}\p{M}]+");
+    static readonly Regex Protected = Rx(@"(?im)^\s*(?:[#>|]|[-*]\s|\d+[.)]\s).*?$|(?:\x60[^\r\n\x60]*\x60)|(?:https?://|www\.)[^\s]+|[\w.+-]+@[\w.-]+\.\w+|(?:[a-z]:\\|\\\\)[^\s]+|\b\d+(?:[.,:/-]\d+)+\b|\b[\w-]+\.(?:com|org|br|net|exe|md|json)\b|[\w]+_[\w]+");
+    static readonly Regex CodeLine = Rx(@"(?i)^\s*(?:function|const|using|class|import|git|SELECT)\s|(?:=>|[{};]\s*$|</?\w+>|:=)");
+    static Regex Rx(string pattern) => new(pattern, RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(180));
+    static readonly HashSet<string> Markers = new("eu meu minha você voce voces vocês não nao também tambem estou hoje nós nos para uma são sao com está esta isso essa que obrigado obrigada olá ola entanto amanhã amanha relatório preciso atenção atenção temos português portugues vontade eles elas gente do da dos das não".Split(' '), StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, string> AccentMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["voce"] = "você",
+        ["voces"] = "vocês",
+        ["nao"] = "não",
+        ["tambem"] = "também",
+        ["amanha"] = "amanhã",
+        ["portugues"] = "português",
+        ["ninguem"] = "ninguém",
+        ["alguem"] = "alguém",
+        ["parabens"] = "parabéns",
+        ["informacao"] = "informação",
+        ["informacoes"] = "informações",
+        ["correcao"] = "correção",
+        ["relatorio"] = "relatório",
+        ["entao"] = "então",
+        ["ola"] = "olá"
+    };
+    static readonly Regex Abbrev = Rx(@"(?i)\b(?:sr|sra|dr|dra|prof|etc|p\.ex|ex|art|av|pág)\.$|(?:\b\p{L}\.){2,}$");
+    static readonly Regex SentenceStart = Rx(@"(^[ \t""“(]*|[.!?][ \t]+[""“(]*)(\p{Ll})");
+    static readonly Regex RepeatedSpaces = Rx(@"(?<=\S)[ \t]{2,}(?=\S)");
+    static readonly Regex BeforeMark = Rx(@"(?<=\S)[ \t]+([,;:!?.])");
+    static readonly Regex AfterMark = Rx(@"([,;:!?])(?=\p{L})|(?<=\p{Ll})(\.)(?=\p{Ll}{2,}\b)");
+    static readonly Regex EligibleEnd = Rx(@"\p{L}[\p{L}\p{M}]*[ \t]*$");
+    static readonly Regex PluralTer = Rx(@"(?i)\b(eles|elas|vocês) (tem)\b");
+    static readonly Regex NosVai = Rx(@"(?i)\b(nós) (vai)\b");
+    static readonly Regex GenteVamos = Rx(@"(?i)\b(a gente) (vamos)\b");
+    static string MatchCase(string old, string value) =>
+        old.All(char.IsUpper) ? value.ToUpperInvariant() : char.IsUpper(old[0]) ? char.ToUpperInvariant(value[0]) + value[1..] : value;
+
+    public string Correct(string text, RuleSettings rules, bool manual, bool paragraphComplete = false, bool startsAtBoundary = true)
+    {
+        if (string.IsNullOrWhiteSpace(text) || text.Length > 100_000) return text;
+        // Preserva as quebras originais (inclusive CRLF) e não entra em blocos Markdown.
+        bool fenced = false;
+        var parts = Regex.Split(text, @"(\r\n|\r|\n)");
+        for (int i = 0; i < parts.Length; i += 2)
+        {
+            var line = parts[i];
+            if (line.TrimStart().StartsWith("\x60\x60\x60") || line.TrimStart().StartsWith("~~~")) { fenced = !fenced; continue; }
+            if (fenced || line.Length > 8192 || CodeLine.IsMatch(line)) continue;
+            var protectedTokens = new List<string>();
+            if (line.Contains('\uE000') || line.Contains('\uE001')) continue;
+            line = Protected.Replace(line, m => { protectedTokens.Add(m.Value); return "\uE000" + (protectedTokens.Count - 1) + "\uE001"; });
+            var words = Words.Matches(line).Select(m => m.Value).ToArray();
+            // Evidência lexical, nunca o layout do teclado. Trechos ambíguos ficam intactos.
+            int markers = words.Count(Markers.Contains);
+            if (!manual && markers == 1 && words.Length == 1 && words[0].ToLowerInvariant() is "do" or "da" or "nos" or "que" or "para" or "ola" or "com") continue;
+            if (words.Length == 0 || (markers == 0 && (!manual || words.Length < 2))) continue;
+            var lexicon = dictionary.Value;
+            int known = words.Count(w => Markers.Contains(w) || AccentMap.ContainsKey(w) || lexicon.Check(w.ToLowerInvariant()));
+            if (known * 2 < words.Length || (markers == 0 && known != words.Length)) continue;
+            if (rules.Accents || (manual && rules.Spelling))
+                line = Words.Replace(line, m =>
+                {
+                    if (rules.Accents && AccentMap.TryGetValue(m.Value, out var accent) && lexicon.Check(accent))
+                        return MatchCase(m.Value, accent);
+                    // Opt-in, sob demanda: só uma sugestão, nenhuma para siglas e nomes capitalizados.
+                    if (!manual || !rules.Spelling || m.Length < 4 || m.Length > 32 || char.IsUpper(m.Value[0]) || lexicon.Check(m.Value)) return m.Value;
+                    var options = lexicon.Suggest(m.Value).Take(2).ToArray();
+                    return options.Length == 1 ? options[0] : m.Value;
+                });
+            if (rules.Grammar)
+            {
+                // Concordância apenas com sujeito explícito. Há risco em citações ou
+                // transcrições coloquiais; desabilite Gramática para preservá-las.
+                line = Lightproof.Grammar(line);
+                line = PluralTer.Replace(line, m => m.Groups[1].Value + " " + MatchCase(m.Groups[2].Value, "têm"));
+                line = NosVai.Replace(line, m => m.Groups[1].Value + " " + MatchCase(m.Groups[2].Value, "vamos"));
+                line = GenteVamos.Replace(line, m => m.Groups[1].Value + " " + MatchCase(m.Groups[2].Value, "vai"));
+            }
+            if (rules.Commas) line = Lightproof.Commas(line);
+            if (rules.Spacing)
+            {
+                line = RepeatedSpaces.Replace(line, " ");
+                line = BeforeMark.Replace(line, "$1");
+                line = AfterMark.Replace(line, m => m.Value + " ");
+            }
+            if (rules.Capitals) line = SentenceStart.Replace(line, m =>
+            {
+                if (m.Index == 0 && i == 0 && !startsAtBoundary) return m.Value;
+                if (m.Value.StartsWith('.') && Abbrev.IsMatch(line[..(m.Index + 1)])) return m.Value;
+                return m.Groups[1].Value + m.Groups[2].Value.ToUpperInvariant();
+            });
+            // Só ao concluir um parágrafo ou por solicitação. Uma pausa ao digitar não encerra a frase.
+            if (rules.FinalStop && (manual || paragraphComplete || i + 2 < parts.Length) && words.Length >= 2 && EligibleEnd.IsMatch(line))
+                line = line.TrimEnd(' ', '\t') + "." + line[line.TrimEnd(' ', '\t').Length..];
+            parts[i] = Regex.Replace(line, "\uE000([0-9]+)\uE001", m => protectedTokens[int.Parse(m.Groups[1].Value)]);
+        }
+        return string.Concat(parts);
+    }
+}

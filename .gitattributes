@@ -1,0 +1,4 @@
+* text=auto
+resources/pt_BR/* -text
+*.ico binary
+*.png binary

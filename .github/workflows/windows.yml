@@ -1,0 +1,21 @@
+name: Windows
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore tests/AGC.Tests --locked-mode
+      - run: dotnet run --project tests/AGC.Tests -c Release --no-restore -- --windows
+      - run: ./tools/package.ps1
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: artifacts/*.zip
+

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType><UseWindowsForms>true</UseWindowsForms><UseWPF>true</UseWPF>
+    <AssemblyName>AutomaticGrammarCorrection</AssemblyName><RootNamespace>Agc</RootNamespace>
+    <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AGC.Tests" />
+    <PackageReference Include="WeCantSpell.Hunspell" Version="7.0.1" />
+    <Content Include="../../resources/pt_BR/*" Link="pt_BR/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../licenses/*" Link="licenses/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Lightproof.cs" Link="licenses/source/Lightproof.cs" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../LICENSE" Link="LICENSE" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../assets/tray.ico" Link="tray.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

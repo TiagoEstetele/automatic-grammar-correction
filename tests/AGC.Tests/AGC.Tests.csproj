@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><OutputType>Exe</OutputType><UseWindowsForms>true</UseWindowsForms><AssemblyName>AGC.Tests</AssemblyName></PropertyGroup>
+ <ItemGroup><ProjectReference Include="../../src/AGC/AGC.csproj" /></ItemGroup>
+</Project>
