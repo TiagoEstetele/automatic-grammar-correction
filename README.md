@@ -14,7 +14,7 @@ O Explainer original mostra a escrita de um e-mail, a correção por palavra, a 
 
 ## Instalar e usar
 
-1. Baixe o ZIP Windows x64 na [página de versões](https://github.com/TiagoEstetele/automatic-grammar-correction/releases). Extraia **toda a pasta** e abra `AutomaticGrammarCorrection.exe`. O pacote inclui o runtime necessário. Não requer administrador.
+1. Baixe o [instalador para Windows x64](https://github.com/TiagoEstetele/automatic-grammar-correction/releases/download/v2.0.1/AGC-Setup-2.0.1-win-x64.exe), execute-o e clique em **Instalar**. Ao concluir, abra o AGC pelo **menu Iniciar**. O assistente oferece um atalho opcional na área de trabalho. O instalador já contém o runtime, funciona offline e não pede administrador.
 2. Dê dois cliques no executável ou no ícone de duas linhas da bandeja para abrir as configurações. Se a janela estiver minimizada, ela será restaurada. O corretor usa uma única instância. Para iniciar silenciosamente, execute `AutomaticGrammarCorrection.exe --tray`.
 3. Espaço e pontuação disparam a revisão da última palavra. Nos campos Win32 Edit compatíveis, o AGC corrige diretamente. Em editores acessíveis como o Codex, o modo automático pode ajustar os separadores imediatamente antes do cursor: por exemplo, “no entanto ” vira “no entanto, ”. Ele nunca seleciona palavras inteiras para redigitá-las em segundo plano. Decimais como “1,50” são preservados.
 4. Selecione o trecho desejado. Com o pop-up aberto, pressione **F8** para revisar tudo e substituir a seleção de uma vez. Se preferir, escolha **Ortografia**, **Gramática** ou **Pontuação** antes de pressionar F8. O botão **Revisar e aplicar** também funciona quando outro aplicativo já reservou a tecla. Fora do pop-up, F8 conserva sua função normal. **Ctrl+Shift+G** abre a prévia completa da seleção editável ou melhora o conteúdo copiado quando não há seleção. Com a prévia visível, **Enter** ou **F8** aplica, **Ctrl+C** copia e **Esc** fecha. Se uma tecla estiver em uso, os botões continuam disponíveis.
@@ -42,7 +42,7 @@ A revisão corrige os padrões documentados e mantém o sentido do texto. O proj
 
 ## Aplicativos, privacidade e tela cheia
 
-Em **Configurações → Aplicativos**, todos os executáveis identificados com janela aberta ou já utilizados começam habilitados. A preferência usa o caminho do executável. Os dados ficam em `%LOCALAPPDATA%\AutomaticGrammarCorrection\settings.json`, com gravação por substituição atômica. O arquivo contém caminhos, preferências e contadores agregados do dia, nunca os textos digitados. Uma configuração inválida é copiada para `.bak` quando possível. Para desinstalar, saia pela bandeja e remova a pasta extraída. Exclua a pasta de preferências se também quiser apagar o histórico de aplicativos.
+Em **Configurações → Aplicativos**, todos os executáveis identificados com janela aberta ou já utilizados começam habilitados. A preferência usa o caminho do executável. Os dados ficam em `%LOCALAPPDATA%\AutomaticGrammarCorrection\settings.json`, com gravação por substituição atômica. O arquivo contém caminhos, preferências e contadores agregados do dia, nunca os textos digitados. Uma configuração inválida é copiada para `.bak` quando possível. Para desinstalar, escolha **Sair do AGC** na bandeja e depois **Configurações do Windows → Aplicativos → Aplicativos instalados → automatic grammar correction → Desinstalar**. Exclua a pasta de preferências se também quiser apagar o histórico de aplicativos.
 
 Ao entrar em tela cheia, a correção automática começa pausada. Uma notificação oferece a escolha. Também é possível responder pelo menu **Correção nesta tela cheia…** se o Windows suprimir as notificações. A decisão vale para aquela janela até ela sair de tela cheia ou fechar. Alternar tarefas mantém a decisão. Uma janela maximizada comum mantém o comportamento habitual.
 
@@ -52,7 +52,7 @@ Ao entrar em tela cheia, a correção automática começa pausada. Uma notifica�
 
 ![Menu da bandeja com Configurações destacado](assets/bandeja.png)
 
-Para atualizar, escolha **Sair** na versão antiga, extraia o ZIP novo e abra o executável. As configurações locais são reaproveitadas.
+Para atualizar, escolha **Sair do AGC** na bandeja e execute o novo instalador. Ele atualiza a instalação do usuário e preserva as preferências. Se você usava a antiga versão ZIP, passe a abrir o AGC pelo menu Iniciar. A pasta portátil anterior não é removida.
 
 ## Escolhas técnicas
 
@@ -70,13 +70,13 @@ dotnet run --project tests/AGC.Tests -c Release --no-restore -- --windows
 dotnet run --project src/AGC -c Release
 ```
 
-Para gerar o ZIP autocontido:
+Para gerar o instalador offline:
 
 ```powershell
 .\tools\package.ps1
 ```
 
-O pacote aparece em `artifacts/`. As fontes estão em `src/AGC/`, os testes em `tests/`, o dicionário em `resources/pt_BR/` e os ícones/avatares em `assets/`. O script opcional `tools/brand.py` regenera a arte com Pillow e as fontes do Windows. Não é necessário para compilar.
+O arquivo `AGC-Setup-<versão>-win-x64.exe` aparece em `artifacts/`. No primeiro build, o script prepara uma cópia portátil do compilador Inno Setup 6.7.4 e verifica o SHA-256. Para usar um compilador já instalado, passe `-Iscc <caminho para ISCC.exe>`. O compilador só é necessário para gerar o instalador. As fontes estão em `src/AGC/`, os testes em `tests/`, o dicionário em `resources/pt_BR/` e os ícones/avatares em `assets/`. O script opcional `tools/brand.py` regenera a arte com Pillow e as fontes do Windows. Não é necessário para compilar.
 
 O executor de testes retorna código diferente de zero em caso de falha. Ele cobre correções, idempotência, idioma, proteção de tokens, opções desligadas, sessões de tela cheia e controles Win32 reais, incluindo preservação de seleção, cancelamento e campos protegidos. Para verificar a integração na máquina de destino, digite no Bloco de Notas, em um campo do navegador e em um aplicativo desativado. Em seguida, teste F11, Alt+Tab, saída de tela cheia e o comando sobre texto copiado.
 

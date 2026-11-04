@@ -17,10 +17,16 @@ jobs:
         timeout-minutes: 2
       - run: ./tools/package.ps1
         shell: pwsh
+      - name: Testar instalação, atualização e desinstalação
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem artifacts -Filter 'AGC-Setup-*-win-x64.exe')
+          if ($setup.Count -ne 1) { throw 'Esperado um instalador.' }
+          ./tools/test-installer.ps1 -Setup $setup[0].FullName
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: artifacts/*.zip
+          path: artifacts/AGC-Setup-*-win-x64.exe
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -38,16 +44,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $zip = Get-ChildItem package -Filter '*.zip'
-          if (@($zip).Count -ne 1) { throw 'Esperado exatamente um pacote Windows.' }
-          $hash = (Get-FileHash $zip.FullName).Hash.ToLowerInvariant()
+          $setup = Get-ChildItem package -Filter 'AGC-Setup-*-win-x64.exe'
+          if (@($setup).Count -ne 1) { throw 'Esperado exatamente um instalador Windows.' }
+          $hash = (Get-FileHash $setup.FullName).Hash.ToLowerInvariant()
           $notes = @(
-            'Extraia o ZIP completo e execute AutomaticGrammarCorrection.exe. O pacote para Windows x64 inclui o runtime, o dicionário pt-BR e as licenças.'
+            'Baixe e execute o instalador .exe para Windows x64. Ele cria o atalho no menu Iniciar e inclui o runtime, o dicionário pt-BR e as licenças. Nenhum download adicional é necessário.'
             ''
-            'Novo design Nocturne no painel, na bandeja e na prévia. Selecione o texto, confira as alterações e pressione Enter ou F8 para aplicar. A demonstração com som está no README e no ZIP.'
+            'Se estiver usando uma versão anterior, escolha Sair do AGC na bandeja antes de instalar. As preferências locais são mantidas.'
             ''
-            "SHA-256 do ZIP: $hash"
+            "SHA-256 do instalador: $hash"
           )
           $notes | Set-Content -Encoding utf8 release-notes.md
-          gh release create $env:GITHUB_REF_NAME $zip.FullName --repo $env:GITHUB_REPOSITORY --verify-tag --title "automatic grammar correction $env:GITHUB_REF_NAME" --notes-file release-notes.md
+          gh release create $env:GITHUB_REF_NAME $setup.FullName --repo $env:GITHUB_REPOSITORY --verify-tag --title "automatic grammar correction $env:GITHUB_REF_NAME" --notes-file release-notes.md
 

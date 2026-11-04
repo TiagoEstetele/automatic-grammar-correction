@@ -1,4 +1,4 @@
-param([string]$Dotnet = 'dotnet')
+param([string]$Dotnet = 'dotnet', [string]$Iscc)
 $ErrorActionPreference='Stop'
 $root=(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $project=Join-Path $root 'src/AGC/AGC.csproj'
@@ -14,12 +14,8 @@ foreach ($asset in @('avatar.png','mark.svg','painel.png','revisao.png','bandeja
 New-Item -Force -ItemType Directory -Path (Join-Path $stage 'docs/media') | Out-Null
 Copy-Item -Path (Join-Path $root 'docs/media/*') -Destination (Join-Path $stage 'docs/media')
 $version=([xml](Get-Content -Raw (Join-Path $root 'Directory.Build.props'))).Project.PropertyGroup.Version
-$zip=Join-Path $out "automatic-grammar-correction-$version-win-x64.zip"
-# Tar do Windows produz ZIP e preserva todos os diretórios do runtime.
-Push-Location $stage
-try {
-    tar.exe -a -cf $zip .
-    if ($LASTEXITCODE) {throw 'Falha ao criar o ZIP'}
-} finally {Pop-Location}
-Get-FileHash $zip -Algorithm SHA256
-
+if (!$Iscc) { $Iscc = & (Join-Path $PSScriptRoot 'get-iscc.ps1') }
+& $Iscc /Qp "/DPublishDir=$stage" "/DArtifactDir=$out" "/DAppVersion=$version" (Join-Path $root 'installer/agc.iss')
+if ($LASTEXITCODE) { throw "Falha ao compilar o instalador ($LASTEXITCODE)" }
+$setup = Join-Path $out "AGC-Setup-$version-win-x64.exe"
+Get-FileHash -LiteralPath $setup -Algorithm SHA256
